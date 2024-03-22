@@ -1,0 +1,2966 @@
+---
+title: "Step05.EPKM.Rmd"
+author: "Vu lab"
+date: "2023-06-19"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE)
+```
+
+
+```{r}
+library(tidyverse)
+library(rstatix)
+library(ggpubr)
+library(ggplot2)
+library(limma)
+library(edgeR)
+
+```
+CDS
+CDS+3'UTR
+
+save(gene_epkm, gene_nsites, gene_rpkm, file = "Step04.epkm_nsites_rpkm_CDS_3UTR.rdata")
+
+save(gene_epkm, gene_nsites, gene_rpkm, file = "Step04.epkm_nsites_rpkm_CDS.rdata")
+
+# How to calculate EPKM
+After C2U QC, we want to see the three replications of each condition (SCR, shRNA33, shRNA37)
+Here we use EPKM scatter plot as indicator to show the replications.
+
+for the EPKM differential level analysis --> it is possible that because the EPKM values are too small --> the statistical test does not work
+one thing we can try is to multiply the values 10^3 to get it to the similar values we usually have for RPKM --> then run the analysis
+
+EPKM-CDS
+EPKM-CDS+3’utr; 
+
+
+
+how to calculate EPKM (edited reads per kilobase of transcripts per million mapped reads) 
+https://www.nature.com/articles/s41592-021-01128-0#Sec2
+ 
+To calculate EPKM values for each gene, we used cumulative edit counts (T coverage over each edit site called) as determined by SAILOR (v1.1.0). We summed region-specific (either CDS or CDS and 3′ UTR, as defined by hg19 v19 Gencode annotations) edit counts for each gene and divided this number by the ‘per million’ mapped read counts to either CDS or CDS and 3′ UTR, respectively, for all genes with read counts greater than 0 as defined by Subread featureCounts (v1.5.3). We then normalized this number to the length of either the CDS or the CDS and 3′ UTR of each gene in kilobases. To assess the relationship between RPS2–STAMP and mRNA translation, we compared these per-gene EPKM values to normalized read units (RPKM values) for ribosome-protected transcripts assessed in Ribo-seq (GSE94460) and polysome-seq (GSE109423). For these analyses, we included all genes with detected read counts in either our RPS2–STAMP or ribosome-occupancy datasets.
+
+According to this describe, we calculate EPKM as following:
+1. Calculate the edited reads count for each gene by multiplying edit_site_coverage with editRatio (CDS and 3′ UTR). 
+edited_reads = coverage * editRatio
+
+2. Sum the edited reads counts for each gene. 
+sum_edited_reads = sum(edited_reads)
+
+3. divided this number by the ‘per million’ mapped read counts to either CDS or CDS and 3′ UTR, respectively, for all genes with read counts greater than 0 (my understanding: total gene expression count of each sample / 1e6).  Then normalize the result to the length of the transcript in kilobases (gene_length / 1e3).
+
+per_million_mapped_read_counts = sum(sample_sites_counts$gene_expression_counts) / 1e6
+EPKM = (sum_edited_reads / per_million_mapped_read_counts) / (Length / 1e3)  
+
+## Import data
+
+```{r}
+library(tidyverse)
+load(file = "output/Step03.C2U_QC.rdata")
+load(file = "output/Step02.TranscriptID_Geneid_Genename.rdata")
+
+# gene expression count
+gene_count <- read.delim("Count/count.out",
+                         comment.char = "#",
+                         row.names = 1) %>% # set row names to the values in the first column
+  select(-c(1:5)) %>%  # Use dplyr::select() to remove columns from the data frame
+  rename_all(~ gsub(".bam", "", .))  # Use dplyr::rename_all() and gsub() to remove ".bam" from all column names
+
+
+# Subset the gene_count data frame to include only rows where the row sum is greater than 0
+gene_count <- gene_count[which(rowSums(gene_count) > 0),]
+
+gene_length <- read.delim("Count/count.out",
+                         comment.char = "#")%>% 
+  select(Geneid, Length) 
+
+
+gene_count <- as.data.frame(gene_count)
+gene_count <- gene_count %>% 
+  rownames_to_column(var = "Geneid") %>%
+  left_join(gene_length, by="Geneid")
+
+```
+
+
+
+## EPKM function
+
+
+
+# 0. EPKM (without modification)
+per_million_mapped_read_counts = sum(sample_sites_counts$gene_expression_counts) / 1e6
+EPKM = (sum_edited_reads / per_million_mapped_read_counts) / (Length / 1e3)
+
+## 0.1 EPKM-CDS
+
+```{r}
+library(dplyr)
+
+# Define function to calculate EPKM for a given sample data frame
+calculate_epkm <- function(sample_df, sample_name) {
+  # Rename columns and join with gene count data frame
+  sample_sites_counts <- sample_df %>%
+    left_join(gene_count, by = "Geneid") %>%
+    rename(gene_expression_counts = !!sym(sample_name),
+          coverage := paste0(sample_name, "_coverage"),
+          editRatio := paste0(sample_name, "_editRatio"),
+          score := paste0(sample_name, "_score")) %>% 
+    dplyr::select(chr, start, Geneid, Genename, biotype, Length, strand, coverage, editRatio, score, gene_expression_counts) %>%
+    distinct() %>%
+    filter(biotype %in% c("CDS")) %>%
+    filter(gene_expression_counts > 0) 
+  
+  # Calculate edited reads count and sum them for each gene
+  sample_edited_reads <- sample_sites_counts %>%
+    mutate(across(c(coverage, editRatio), as.numeric)) %>% # convert to numeric
+    mutate(edited_reads = coverage * editRatio) %>%
+    group_by(Geneid, Length, gene_expression_counts) %>%
+    summarise(sum_edited_reads = sum(edited_reads), .groups = "drop")
+  
+  # Calculate EPKM
+  
+  sample_epkm <- sample_edited_reads %>%
+    mutate(
+      per_million_mapped_read_counts = sum(sample_sites_counts$gene_expression_counts) / 1e6,
+      gene_length_kb = Length / 1e3,
+      EPKM = (sum_edited_reads / per_million_mapped_read_counts) / gene_length_kb
+    ) %>%
+    dplyr::select(Geneid, EPKM) %>%
+    rename(!!paste0(sample_name, "_EPKM") := EPKM)
+  
+  return(sample_epkm)
+}
+
+
+
+# Calculate EPKM for each sample
+SCR_Rep1_epkm <- calculate_epkm(SCR_Rep1, "SCR_Rep1") 
+SCR_Rep2_epkm <- calculate_epkm(SCR_Rep2, "SCR_Rep2")
+SCR_Rep3_epkm <- calculate_epkm(SCR_Rep3, "SCR_Rep3")
+
+SCR_epkm <- SCR_Rep1_epkm %>%
+  full_join(SCR_Rep2_epkm, by = "Geneid") %>%
+  full_join(SCR_Rep3_epkm, by = "Geneid") %>%
+  replace_na(list(SCR_Rep1_EPKM = 0, SCR_Rep2_EPKM = 0, SCR_Rep3_EPKM = 0)) %>%
+  filter((SCR_Rep1_EPKM > 0 & SCR_Rep2_EPKM > 0) |
+           (SCR_Rep1_EPKM > 0 & SCR_Rep3_EPKM > 0) |
+           (SCR_Rep2_EPKM > 0 & SCR_Rep3_EPKM > 0))
+
+
+
+shRNA33_Rep1_epkm <- calculate_epkm(shRNA33_Rep1, "shRNA33_Rep1")
+shRNA33_Rep2_epkm <- calculate_epkm(shRNA33_Rep2, "shRNA33_Rep2")
+shRNA33_Rep3_epkm <- calculate_epkm(shRNA33_Rep3, "shRNA33_Rep3")
+
+shRNA33_epkm <- shRNA33_Rep1_epkm %>%
+  full_join(shRNA33_Rep2_epkm, by = "Geneid") %>%
+  full_join(shRNA33_Rep3_epkm, by = "Geneid") %>%
+  replace_na(list(shRNA33_Rep1_EPKM = 0, shRNA33_Rep2_EPKM = 0, shRNA33_Rep3_EPKM = 0)) %>%
+  filter((shRNA33_Rep1_EPKM > 0 & shRNA33_Rep2_EPKM > 0) |
+           (shRNA33_Rep1_EPKM > 0 & shRNA33_Rep3_EPKM > 0) |
+           (shRNA33_Rep2_EPKM > 0 & shRNA33_Rep3_EPKM > 0))
+
+
+shRNA37_Rep1_epkm <- calculate_epkm(shRNA37_Rep1, "shRNA37_Rep1")
+shRNA37_Rep2_epkm <- calculate_epkm(shRNA37_Rep2, "shRNA37_Rep2")
+shRNA37_Rep3_epkm <- calculate_epkm(shRNA37_Rep3, "shRNA37_Rep3")
+
+shRNA37_epkm <- shRNA37_Rep1_epkm %>%
+  full_join(shRNA37_Rep2_epkm, by = "Geneid") %>%
+  full_join(shRNA37_Rep3_epkm, by = "Geneid") %>%
+  replace_na(list(shRNA37_Rep1_EPKM = 0, shRNA37_Rep2_EPKM = 0, shRNA37_Rep3_EPKM = 0)) %>%
+  filter((shRNA37_Rep1_EPKM > 0 & shRNA37_Rep2_EPKM > 0) |
+           (shRNA37_Rep1_EPKM > 0 & shRNA37_Rep3_EPKM > 0) |
+           (shRNA37_Rep2_EPKM > 0 & shRNA37_Rep3_EPKM > 0))
+
+
+# Join Geneid_epkm data frames by Geneid
+gene_epkm <- SCR_epkm %>%
+  full_join(shRNA33_epkm, by = "Geneid") %>%
+  full_join(shRNA37_epkm, by = "Geneid") 
+
+
+
+
+```
+
+
+### EPKM scatter plot
+
+#### SCR
+```{r}
+# Load required libraries
+library(ggplot2)
+library(dplyr)
+library(ggpmisc)
+
+
+
+p1 <- ggplot(SCR_epkm, aes(x = log2(SCR_Rep1_EPKM + 1), y = log2(SCR_Rep2_EPKM + 1))) +
+  geom_point(size = 2, alpha = 0.5, color = "#2277B5") +
+  stat_poly_eq(aes(label = paste(stat(adj.rr.label), stat(p.value.label), sep = "*\", \"*")),
+               formula = y ~ x,
+               rr.digits = 3, p.digits = 3,
+               parse = TRUE,
+               label.x = "left", label.y = "top") +
+  labs(title = "control", x = "log2(EPKM + 1) rep1", y = "log2(EPKM + 1) rep2") +
+  theme_classic() +
+  theme(aspect.ratio = 1)
+
+
+# SCR_Rep1_Rep3
+
+p2 <- ggplot(SCR_epkm, aes(x = log2(SCR_Rep1_EPKM + 1), y = log2(SCR_Rep3_EPKM + 1))) +
+  geom_point(size = 2, alpha = 0.5, color = "#2277B5") +
+  stat_poly_eq(aes(label = paste(stat(adj.rr.label), stat(p.value.label), sep = "*\", \"*")),
+               formula = y ~ x,
+               rr.digits = 3, p.digits = 3,
+               parse = TRUE,
+               label.x = "left", label.y = "top") +
+  labs(title = "control", x = "log2(EPKM + 1) rep1", y = "log2(EPKM + 1) rep3") +
+  theme_classic() +
+  theme(aspect.ratio = 1)
+
+
+# SCR_Rep2_Rep3
+
+p3 <- ggplot(SCR_epkm, aes(x = log2(SCR_Rep2_EPKM + 1), y = log2(SCR_Rep3_EPKM + 1))) +
+  geom_point(size = 2, alpha = 0.5, color = "#2277B5") +
+  stat_poly_eq(aes(label = paste(stat(adj.rr.label), stat(p.value.label), sep = "*\", \"*")),
+               formula = y ~ x,
+               rr.digits = 3, p.digits = 3,
+               parse = TRUE,
+               label.x = "left", label.y = "top") +
+  labs(title = "control", x = "log2(EPKM + 1) rep2", y = "log2(EPKM + 1) rep3") +
+  theme_classic() +
+  theme(aspect.ratio = 1)
+
+
+library(gridExtra)
+
+# combine the plots
+control_epkm_scattar <- grid.arrange(p1, p2, p3, nrow = 1)
+
+
+ggsave("output/Ste05.control_EPKM_CDS_scattar.pdf", plot = control_epkm_scattar, device = "pdf", width = 8, height = 6)
+
+```
+
+
+#### shRNA33
+
+```{r}
+# Load required libraries
+library(ggplot2)
+library(dplyr)
+library(ggpmisc)
+
+
+
+p1 <- ggplot(shRNA33_epkm, aes(x = log2(shRNA33_Rep1_EPKM + 1), y = log2(shRNA33_Rep2_EPKM + 1))) +
+  geom_point(size = 2, alpha = 0.5, color = "#2277B5") +
+  stat_poly_eq(aes(label = paste(stat(adj.rr.label), stat(p.value.label), sep = "*\", \"*")),
+               formula = y ~ x,
+               rr.digits = 3, p.digits = 3,
+               parse = TRUE,
+               label.x = "left", label.y = "top") +
+  labs(title = "KD-33", x = "log2(EPKM + 1) rep1", y = "log2(EPKM + 1) rep2") +
+  theme_classic() +
+  theme(aspect.ratio = 1)
+
+
+# shRNA33_Rep1_Rep3
+
+p2 <- ggplot(shRNA33_epkm, aes(x = log2(shRNA33_Rep1_EPKM + 1), y = log2(shRNA33_Rep3_EPKM + 1))) +
+  geom_point(size = 2, alpha = 0.5, color = "#2277B5") +
+  stat_poly_eq(aes(label = paste(stat(adj.rr.label), stat(p.value.label), sep = "*\", \"*")),
+               formula = y ~ x,
+               rr.digits = 3, p.digits = 3,
+               parse = TRUE,
+               label.x = "left", label.y = "top") +
+  labs(title = "KD-33", x = "log2(EPKM + 1) rep1", y = "log2(EPKM + 1) rep3") +
+  theme_classic() +
+  theme(aspect.ratio = 1)
+
+
+# shRNA33_Rep2_Rep3
+
+p3 <- ggplot(shRNA33_epkm, aes(x = log2(shRNA33_Rep2_EPKM + 1), y = log2(shRNA33_Rep3_EPKM + 1))) +
+  geom_point(size = 2, alpha = 0.5, color = "#2277B5") +
+  stat_poly_eq(aes(label = paste(stat(adj.rr.label), stat(p.value.label), sep = "*\", \"*")),
+               formula = y ~ x,
+               rr.digits = 3, p.digits = 3,
+               parse = TRUE,
+               label.x = "left", label.y = "top") +
+  labs(title = "KD-33", x = "log2(EPKM + 1) rep2", y = "log2(EPKM + 1) rep3") +
+  theme_classic() +
+  theme(aspect.ratio = 1)
+
+
+library(gridExtra)
+
+# combine the plots
+KD33_epkm_scattar <- grid.arrange(p1, p2, p3, nrow = 1)
+
+ggsave("output/Step05.KD33_EPKM_CDS_scattar.pdf", plot = KD33_epkm_scattar, device = "pdf", width = 8, height = 6)
+```
+
+
+#### shRNA37
+
+
+```{r}
+# Load required libraries
+library(ggplot2)
+library(dplyr)
+library(ggpmisc)
+
+p1 <- ggplot(shRNA37_epkm, aes(x = log2(shRNA37_Rep1_EPKM + 1), y = log2(shRNA37_Rep2_EPKM + 1))) +
+  geom_point(size = 2, alpha = 0.5, color = "#2277B5") +
+  stat_poly_eq(aes(label = paste(stat(adj.rr.label), stat(p.value.label), sep = "*\", \"*")),
+               formula = y ~ x,
+               rr.digits = 3, p.digits = 3,
+               parse = TRUE,
+               label.x = "left", label.y = "top") +
+  labs(title = "KD-37", x = "log2(EPKM + 1) rep1", y = "log2(EPKM + 1) rep2") +
+  theme_classic() +
+  theme(aspect.ratio = 1)
+
+
+# shRNA37_Rep1_Rep3
+p2 <- ggplot(shRNA37_epkm, aes(x = log2(shRNA37_Rep1_EPKM + 1), y = log2(shRNA37_Rep3_EPKM + 1))) +
+  geom_point(size = 2, alpha = 0.5, color = "#2277B5") +
+  stat_poly_eq(aes(label = paste(stat(adj.rr.label), stat(p.value.label), sep = "*\", \"*")),
+               formula = y ~ x,
+               rr.digits = 3, p.digits = 3,
+               parse = TRUE,
+               label.x = "left", label.y = "top") +
+  labs(title = "KD-37", x = "log2(EPKM + 1) rep1", y = "log2(EPKM + 1) rep3") +
+  theme_classic() +
+  theme(aspect.ratio = 1)
+
+
+# shRNA37_Rep2_Rep3
+p3 <- ggplot(shRNA37_epkm, aes(x = log2(shRNA37_Rep2_EPKM + 1), y = log2(shRNA37_Rep3_EPKM + 1))) +
+  geom_point(size = 2, alpha = 0.5, color = "#2277B5") +
+  stat_poly_eq(aes(label = paste(stat(adj.rr.label), stat(p.value.label), sep = "*\", \"*")),
+               formula = y ~ x,
+               rr.digits = 3, p.digits = 3,
+               parse = TRUE,
+               label.x = "left", label.y = "top") +
+  labs(title = "KD-37", x = "log2(EPKM + 1) rep2", y = "log2(EPKM + 1) rep3") +
+  theme_classic() +
+  theme(aspect.ratio = 1)
+
+
+library(gridExtra)
+
+# combine the plots
+KD37_epkm_scattar <- grid.arrange(p1, p2, p3, nrow = 1)
+
+ggsave("output/Step05.KD37_EPKM_CDS_scattar.pdf", plot = KD37_epkm_scattar, device = "pdf", width = 8, height = 6)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+### Quartile_BoxPlot 
+
+for the quartile analysis with epkm --> we should use just epkm for scramble --> since the KD affects editing frequency + editing sites.
+quartile bins is defined based on the average value of 3 SCR samples from high to low.
+```{r}
+gene_epkm <- gene_epkm %>%  
+  rename_all(~ gsub("_EPKM", "", .)) %>%
+  mutate_all(~ ifelse(is.na(.), 0, .)) 
+
+```
+
+#### SCR, shRNA33, shRNA37 cut by SCR EPKM value
+
+
+```{r}
+library(tidyverse)
+library(rstatix)
+library(ggpubr)
+
+
+gene_epkm_bin <- gene_epkm %>%
+  arrange(desc((SCR_Rep1 + SCR_Rep2 + SCR_Rep3)/3)) %>% 
+  left_join(Geneid_Genename, by = "Geneid") %>%
+  relocate(Genename, .after = Geneid)
+
+# Calculate the number of rows in each bin 
+rows_per_bin <- nrow(gene_epkm_bin) / 4
+# Print the number of genes in each quartile
+print(paste("Each quartile genes number:", rows_per_bin))
+
+# Add a new "bin" column based on the row index
+gene_epkm_bin <- gene_epkm_bin %>%
+  mutate(bin = as.integer((row_number() - 1) / rows_per_bin) + 1)
+
+# Reshape the data to long format
+long_data <- gene_epkm_bin %>%
+  gather(key = "sample_Rep", value = "EPKM", SCR_Rep1, SCR_Rep2, SCR_Rep3, shRNA33_Rep1, shRNA33_Rep2, shRNA33_Rep3, shRNA37_Rep1, shRNA37_Rep2, shRNA37_Rep3) %>%
+  mutate(sample_group = case_when(
+    grepl("SCR", sample_Rep) ~ "SCR",
+    grepl("shRNA33", sample_Rep) ~ "shRNA33",
+    grepl("shRNA37", sample_Rep) ~ "shRNA37"
+  ))
+
+
+library(rstatix)
+# Perform pairwise Wilcoxon rank-sum tests
+pairwise_comparisons <- long_data %>%
+  group_by(bin) %>%
+  pairwise_wilcox_test(EPKM ~ sample_group, p.adjust.method = "bonferroni")
+
+# Filter the significant comparisons (e.g., p-value < 0.05)
+EPKM_3_significant_comparisons <- pairwise_comparisons %>%
+  filter(p.adj < 0.05)
+
+print(EPKM_3_significant_comparisons)
+
+# Calculate the average EPKM value for each sample group in each bin
+average_EPKM <- long_data %>%
+  group_by(bin, sample_group) %>%
+  summarize(mean_EPKM = mean(EPKM),
+            median_EPKM = median(EPKM),
+            .groups = "drop")
+
+
+
+
+
+# Print the average EPKM values
+print(average_EPKM)
+
+
+# save as excel
+library(openxlsx)
+
+# Create a new workbook
+wb <- createWorkbook()
+
+# Add the data frames as sheets to the workbook
+## sheet1
+addWorksheet(wb, "gene_epkm")
+writeData(wb, "gene_epkm", gene_epkm)
+
+## sheet2
+addWorksheet(wb, "EPKM_bins")
+writeData(wb, "EPKM_bins", long_data)
+
+## sheet3
+addWorksheet(wb, "3groups_significant")
+writeData(wb, "3groups_significant", EPKM_3_significant_comparisons)
+
+## sheet4
+addWorksheet(wb, "average_EPKM")
+writeData(wb, "average_EPKM", average_EPKM)
+
+# Save the workbook to a file
+saveWorkbook(wb, "output/Step05.EPKM_CDS_Quartile_binByEPKM_3groups.xlsx", overwrite = TRUE)
+
+
+
+
+# Generate the box plot
+colors <- c("#C1C0C0", "#76D7FF", "#1796FF")
+
+
+EPKM_Quartile_binByEPKM_3groups <- ggplot(long_data, aes(x = as.factor(bin), y = log2(EPKM + 1), fill = sample_group)) +
+  geom_boxplot(color = "grey50", outlier.size = 0.5) +
+  labs(x = "Quartile", y = "log2(EPKM + 1)", title = "EPKM (CDS) rank by control EPKM value") +
+  scale_fill_manual(values = colors, 
+                    labels = c("control", "KD-33", "KD-37"),
+                    name = "") +
+  theme_classic() +
+  theme(legend.position = c(0.82, 0.95),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.background = element_rect(fill = "transparent", color = NA),
+        legend.text = element_text(size = 9),
+        legend.title = element_text(size = 9),
+        legend.key.size = unit(0.3, "cm"),
+        aspect.ratio = 2/1)
+
+
+
+ggsave("output/Step05.EPKM_CDS_Quartile_binByEPKM_3groups.pdf", plot = EPKM_Quartile_binByEPKM_3groups, device = "pdf", width = 8, height = 6)
+
+
+
+
+```
+
+
+#### SCR, shRNA cut by SCR EPKM value
+
+
+```{r}
+# Reshape the data to long format
+long_data <- gene_epkm_bin %>%
+  gather(key = "sample_Rep", value = "EPKM", SCR_Rep1, SCR_Rep2, SCR_Rep3, shRNA33_Rep1, shRNA33_Rep2, shRNA33_Rep3, shRNA37_Rep1, shRNA37_Rep2, shRNA37_Rep3) %>%
+  mutate(sample_group = case_when(
+    grepl("SCR", sample_Rep) ~ "SCR",
+    grepl("shRNA33", sample_Rep) ~ "shRNA33",
+    grepl("shRNA37", sample_Rep) ~ "shRNA37"
+  )) %>%
+  mutate(combined_group = case_when(
+    sample_group == "SCR" ~ "SCR",
+    sample_group %in% c("shRNA33", "shRNA37") ~ "shRNA"
+  ))
+
+# Perform pairwise Wilcoxon rank-sum tests
+pairwise_comparisons <- long_data %>%
+  group_by(bin) %>%
+  pairwise_wilcox_test(EPKM ~ combined_group, p.adjust.method = "bonferroni", pool.sd = FALSE)
+
+# Filter the significant comparisons (e.g., p-value < 0.05)
+EPKM_2_significant_comparisons <- pairwise_comparisons %>%
+  filter(p.adj < 0.05)
+
+print(EPKM_2_significant_comparisons)
+
+# Calculate the average EPKM value for each sample group in each bin
+average_EPKM <- long_data %>%
+  group_by(bin, combined_group) %>%
+  summarize(mean_EPKM = mean(EPKM),
+            median_EPKM = median(EPKM),
+            .groups = "drop")
+
+
+# Print the average EPKM values
+print(average_EPKM)
+
+
+# save as excel
+library(openxlsx)
+
+# Create a new workbook
+wb <- createWorkbook()
+
+# Add the data frames as sheets to the workbook
+## sheet1
+addWorksheet(wb, "gene_epkm")
+writeData(wb, "gene_epkm", gene_epkm)
+
+## sheet2
+addWorksheet(wb, "EPKM_bins")
+writeData(wb, "EPKM_bins", long_data)
+
+## sheet3
+addWorksheet(wb, "2groups_significant")
+writeData(wb, "2groups_significant", EPKM_2_significant_comparisons)
+
+## sheet4
+addWorksheet(wb, "average_EPKM")
+writeData(wb, "average_EPKM", average_EPKM)
+
+# Save the workbook to a file
+saveWorkbook(wb, "output/Step05.EPKM_CDS_Quartile_binByEPKM_2groups.xlsx", overwrite = TRUE)
+
+
+
+# Generate the box plot
+colors <- c("#C1C0C0", "#1796FF")
+
+
+EPKM_Quartile_binByEPKM_2groups <- ggplot(long_data, aes(x = as.factor(bin), y = log2(EPKM + 1), fill = combined_group)) +
+  geom_boxplot(color = "grey50", outlier.size = 0.5) +
+  labs(x = "Quartile", y = "log2(EPKM + 1)", title = "EPKM (CDS) rank by control EPKM value") +
+  scale_fill_manual(values = colors, labels = c("control", "KD"), name = "") +
+  theme_classic() +
+  theme(legend.position = c(0.82, 0.95),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.background = element_rect(fill = "transparent", color = NA),
+        legend.text = element_text(size = 9),
+        legend.title = element_text(size = 9),
+        legend.key.size = unit(0.3, "cm"),
+        aspect.ratio = 2/1)
+
+ggsave("output/Step05.EPKM_CDS_Quartile_binByEPKM_2groups.pdf", plot = EPKM_Quartile_binByEPKM_2groups, device = "pdf", width = 8, height = 6)
+
+
+
+
+save(gene_epkm_bin, file = "output/Step05.EPKM_CDS_SCR_shRNA_EPKMbin.rdata")
+
+
+```
+
+
+
+
+### Differential results
+
+Using normalized gene expression values rather than raw counts. 
+DESeq2 requires raw count data as input for its statistical model to perform differential expression analysis. 
+Here, we can use other methods for differential expression analysis that can handle normalized gene expression data, such as limma-voom or edgeR.
+
+```{r}
+gene_epkm <- gene_epkm %>%  
+  column_to_rownames(var = "Geneid")
+
+
+# Load necessary libraries
+library(limma)
+
+library(ggplot2)
+
+# Subset the gene_epkm data frame to include only rows where the row sum is greater than 0
+gene_epkm <- gene_epkm[which(rowSums(gene_epkm) > 0),]
+
+# Display the dimensions of the resulting data frame
+dim(gene_epkm)
+
+# Create a factor variable condition with three levels
+condition <- factor(paste(rep(c("SCR", "shRNA33", "shRNA37"), each = 3)))
+
+coldata <- data.frame(row.names = colnames(gene_epkm), condition)
+
+# Create a DGEList object from the normalized gene expression data
+dge <- DGEList(counts = gene_epkm)
+
+
+
+# Convert the normalized data to log2-counts per million (logCPM) using limma's voom function
+v <- voom(dge, normalize.method = "none")
+
+# Set up the design matrix for your experimental conditions
+design <- model.matrix(~0 + condition)
+colnames(design) <- levels(condition)
+
+# Fit the linear model and perform differential expression analysis
+fit <- lmFit(v, design)
+contrast.matrix <- makeContrasts(shRNA33_vs_SCR = shRNA33 - SCR, shRNA37_vs_SCR = shRNA37 - SCR, shRNA37_vs_shRNA33 = shRNA37 - shRNA33, levels = design)
+fit2 <- contrasts.fit(fit, contrast.matrix)
+fit2 <- eBayes(fit2)
+
+# Extract the top differentially expressed genes for each contrast
+res_shRNA33_SCR <- topTable(fit2, number = Inf, coef = "shRNA33_vs_SCR")
+res_shRNA37_SCR <- topTable(fit2, number = Inf, coef = "shRNA37_vs_SCR")
+res_shRNA37_shRNA33 <- topTable(fit2, number = Inf, coef = "shRNA37_vs_shRNA33")
+
+# Perform PCA on the logCPM values
+pca <- prcomp(t(v$E), scale = TRUE)
+
+# Create a data frame with the first two principal components and the sample conditions
+pca_df <- data.frame(Sample = rownames(pca$x),
+                     PC1 = pca$x[, 1],
+                     PC2 = pca$x[, 2],
+                     Condition = coldata$condition)
+
+# Plot the PCA with ggplot2
+ggplot(pca_df, aes(x = PC1, y = PC2, color = Condition)) +
+  geom_point(size = 3) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+  labs(title = "PCA plot", x = "PC1", y = "PC2") +
+  scale_color_discrete(name = "Condition")
+
+
+
+
+
+
+
+
+# Extract the replicate information from the sample names
+pca_df$Replicate <- gsub(".*(Rep\\d+).*", "\\1", pca_df$Sample)
+
+# Plot the PCA with ggplot2 and add sample labels
+ggplot(pca_df, aes(x = PC1, y = PC2, color = Condition)) +
+  geom_point(size = 3) +
+  geom_text(aes(label = Replicate), hjust = 0.3, vjust = 1.3, size = 3) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+  labs(title = "PCA plot", x = "PC1", y = "PC2") +
+  scale_color_discrete(name = "Condition")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# create a factor variable condition with three levels
+condition2 <- factor(c("SCR", "SCR", "SCR", "shRNA", "shRNA", "shRNA", "shRNA", "shRNA", "shRNA"))
+
+
+coldata <- data.frame(row.names = colnames(gene_epkm), condition2)
+
+# Create a DGEList object from the normalized gene expression data
+dge <- DGEList(counts = gene_epkm)
+
+
+
+# Convert the normalized data to log2-counts per million (logCPM) using limma's voom function
+v <- voom(dge, normalize.method = "none")
+
+# Set up the design matrix for your experimental condition2s
+design <- model.matrix(~0 + condition2)
+colnames(design) <- levels(condition2)
+
+# Fit the linear model and perform differential expression analysis
+fit <- lmFit(v, design)
+contrast.matrix <- makeContrasts(shRNA_vs_SCR = shRNA - SCR, levels = design)
+fit2 <- contrasts.fit(fit, contrast.matrix)
+fit2 <- eBayes(fit2)
+
+# Extract the top differentially expressed genes for each contrast
+res_shRNA_SCR <- topTable(fit2, number = Inf, coef = "shRNA_vs_SCR")
+
+
+# Perform PCA on the logCPM values
+pca <- prcomp(t(v$E), scale = TRUE)
+
+# Create a data frame with the first two principal components and the sample condition2s
+pca_df <- data.frame(Sample = rownames(pca$x),
+                     PC1 = pca$x[, 1],
+                     PC2 = pca$x[, 2],
+                     condition2 = coldata$condition2)
+
+# Plot the PCA with ggplot2
+ggplot(pca_df, aes(x = PC1, y = PC2, color = condition2)) +
+  geom_point(size = 3) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+  labs(title = "PCA plot", x = "PC1", y = "PC2") +
+  scale_color_discrete(name = "condition2")
+
+
+
+
+
+
+
+
+
+##when we give the different direction, just base on padj, not FoldChange.
+
+
+library(tidyverse)
+# res_shRNA33_SCR
+res_shRNA33_SCR <- as.data.frame(res_shRNA33_SCR)
+res_shRNA33_SCR <- res_shRNA33_SCR %>% 
+  rownames_to_column(var = "Geneid") %>%
+  left_join(Geneid_Genename, by="Geneid") %>%
+  dplyr::select(Geneid, Genename, log2FoldChange = logFC, pvalue = P.Value, padj = adj.P.Val) %>% 
+  mutate(direction = if_else(
+    padj > 0.05, 'ns', if_else(
+      abs(log2FoldChange) == 0, 'ns', if_else(
+        log2FoldChange > 0, 'up', 'down')
+    ))) %>% 
+  arrange(desc(abs(log2FoldChange))) 
+
+## group count
+group_by(res_shRNA33_SCR, direction) %>%
+  summarise(count=n())
+
+
+# res_shRNA37_SCR
+res_shRNA37_SCR <- as.data.frame(res_shRNA37_SCR)
+res_shRNA37_SCR <- res_shRNA37_SCR %>% 
+  rownames_to_column(var = "Geneid") %>%
+  left_join(Geneid_Genename, by="Geneid") %>%
+  dplyr::select(Geneid, Genename, log2FoldChange = logFC, pvalue = P.Value, padj = adj.P.Val) %>% 
+  mutate(direction = if_else(
+    padj > 0.05, 'ns', if_else(
+      abs(log2FoldChange) == 0, 'ns', if_else(
+        log2FoldChange > 0, 'up', 'down')
+    ))) %>%  
+  arrange(desc(abs(log2FoldChange)))   
+
+## group count
+group_by(res_shRNA37_SCR, direction) %>%
+  summarise(count=n())
+
+
+# res_shRNA37_shRNA33
+res_shRNA37_shRNA33 <- as.data.frame(res_shRNA37_shRNA33)
+res_shRNA37_shRNA33 <- res_shRNA37_shRNA33 %>% 
+  rownames_to_column(var = "Geneid") %>%
+  left_join(Geneid_Genename, by="Geneid") %>%
+  dplyr::select(Geneid, Genename, log2FoldChange = logFC, pvalue = P.Value, padj = adj.P.Val) %>% 
+ mutate(direction = if_else(
+    padj > 0.05, 'ns', if_else(
+      abs(log2FoldChange) == 0, 'ns', if_else(
+        log2FoldChange > 0, 'up', 'down')
+    ))) %>%  
+  arrange(desc(abs(log2FoldChange))) 
+
+## group count
+group_by(res_shRNA37_shRNA33, direction) %>%
+  summarise(count=n())
+
+
+# res_shRNA_SCR
+res_shRNA_SCR <- as.data.frame(res_shRNA_SCR)
+res_shRNA_SCR <- res_shRNA_SCR %>% 
+  rownames_to_column(var = "Geneid") %>%
+  left_join(Geneid_Genename, by="Geneid") %>%
+  dplyr::select(Geneid, Genename, log2FoldChange = logFC, pvalue = P.Value, padj = adj.P.Val) %>% 
+ mutate(direction = if_else(
+    padj > 0.05, 'ns', if_else(
+      abs(log2FoldChange) == 0, 'ns', if_else(
+        log2FoldChange > 0, 'up', 'down')
+    ))) %>%  
+  arrange(desc(abs(log2FoldChange))) 
+
+## group count
+group_by(res_shRNA_SCR, direction) %>%
+  summarise(count=n())
+ 
+
+               
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# save as excel
+library(openxlsx)
+
+# Create a new workbook
+wb <- createWorkbook()
+
+# Add the data frames as sheets to the workbook
+## res_shRNA33_SCR
+addWorksheet(wb, "res_shRNA33_SCR")
+writeData(wb, "res_shRNA33_SCR", res_shRNA33_SCR)
+
+## res_shRNA37_SCR
+addWorksheet(wb, "res_shRNA37_SCR")
+writeData(wb, "res_shRNA37_SCR", res_shRNA37_SCR)
+
+## res_shRNA37_shRNA33
+addWorksheet(wb, "res_shRNA37_shRNA33")
+writeData(wb, "res_shRNA37_shRNA33", res_shRNA37_shRNA33)
+
+## res_shRNA_SCR
+addWorksheet(wb, "res_shRNA_SCR")
+writeData(wb, "res_shRNA_SCR", res_shRNA_SCR)
+
+# Save the workbook to a file
+saveWorkbook(wb, "output/Step05.EPKM_CDS_DifferentialAnalysis.xlsx", overwrite = TRUE)
+
+
+
+
+
+
+
+
+res_shRNA33_SCR_EPKM <- res_shRNA33_SCR  
+
+res_shRNA37_SCR_EPKM <- res_shRNA33_SCR 
+
+res_shRNA37_shRNA33_EPKM <- res_shRNA33_SCR 
+
+res_shRNA_SCR_EPKM <- res_shRNA33_SCR 
+
+
+save(res_shRNA33_SCR_EPKM,res_shRNA33_SCR_EPKM,res_shRNA37_SCR_EPKM,res_shRNA37_shRNA33_EPKM,res_shRNA_SCR_EPKM, file = "output/Step05.EPKM_CDS_differential.rdata")
+
+```
+
+
+
+### EPKM_CDS_Differential_quartiles
+
+```{r}
+
+gene_epkm_quartiles <- dplyr::select(gene_epkm_bin, -Genename) %>%
+  relocate(bin,.after = Geneid) %>%
+  rename(quartiles_bin = bin)
+
+
+EPKM_CDS_Differential_quartiles <- left_join(res_shRNA_SCR, gene_epkm_quartiles, by = "Geneid") %>%
+  arrange(desc((SCR_Rep1 + SCR_Rep2 + SCR_Rep3)/3))
+
+# save as excel
+library(openxlsx)
+
+# Create a new workbook
+wb <- createWorkbook()
+
+# Add the data frames as sheets to the workbook
+## EPKM_CDS_Differential_quartiles
+addWorksheet(wb, "EPKM_CDS_Differential_quartiles")
+writeData(wb, "EPKM_CDS_Differential_quartiles", EPKM_CDS_Differential_quartiles)
+
+
+## sheet2
+addWorksheet(wb, "2groups_significant")
+writeData(wb, "2groups_significant", EPKM_2_significant_comparisons)
+
+## sheet3
+addWorksheet(wb, "average_EPKM")
+writeData(wb, "average_EPKM", average_EPKM)
+
+# Save the workbook to a file
+saveWorkbook(wb, "output/Step05.EPKM_CDS_DifferentialAnalysis_4quartiles.xlsx", overwrite = TRUE)
+
+
+
+```
+
+
+
+
+
+
+
+## 0.2 EPKM-CDS+3’utr
+
+```{r}
+library(dplyr)
+
+# Define function to calculate EPKM for a given sample data frame
+calculate_epkm <- function(sample_df, sample_name) {
+  # Rename columns and join with gene count data frame
+  sample_sites_counts <- sample_df %>%
+    left_join(gene_count, by = "Geneid") %>%
+    rename(gene_expression_counts = !!sym(sample_name),
+          coverage := paste0(sample_name, "_coverage"),
+          editRatio := paste0(sample_name, "_editRatio"),
+          score := paste0(sample_name, "_score")) %>% 
+    dplyr::select(chr, start, Geneid, Genename, biotype, Length, strand, coverage, editRatio, score, gene_expression_counts) %>%
+    distinct() %>%
+    filter(biotype %in% c("CDS", "three_prime_utr")) %>%
+    filter(gene_expression_counts > 0) 
+  
+  # Calculate edited reads count and sum them for each gene
+  sample_edited_reads <- sample_sites_counts %>%
+    mutate(across(c(coverage, editRatio), as.numeric)) %>% # convert to numeric
+    mutate(edited_reads = coverage * editRatio) %>%
+    group_by(Geneid, Length, gene_expression_counts) %>%
+    summarise(sum_edited_reads = sum(edited_reads), .groups = "drop")
+  
+  # Calculate EPKM
+  
+  sample_epkm <- sample_edited_reads %>%
+    mutate(
+      per_million_mapped_read_counts = sum(sample_sites_counts$gene_expression_counts) / 1e6,
+      gene_length_kb = Length / 1e3,
+      EPKM = (sum_edited_reads / per_million_mapped_read_counts) / gene_length_kb
+    ) %>%
+    dplyr::select(Geneid, EPKM) %>%
+    rename(!!paste0(sample_name, "_EPKM") := EPKM)
+  
+  return(sample_epkm)
+}
+
+
+
+# Calculate EPKM for each sample
+SCR_Rep1_epkm <- calculate_epkm(SCR_Rep1, "SCR_Rep1") 
+SCR_Rep2_epkm <- calculate_epkm(SCR_Rep2, "SCR_Rep2")
+SCR_Rep3_epkm <- calculate_epkm(SCR_Rep3, "SCR_Rep3")
+
+SCR_epkm <- SCR_Rep1_epkm %>%
+  full_join(SCR_Rep2_epkm, by = "Geneid") %>%
+  full_join(SCR_Rep3_epkm, by = "Geneid") %>%
+  replace_na(list(SCR_Rep1_EPKM = 0, SCR_Rep2_EPKM = 0, SCR_Rep3_EPKM = 0)) %>%
+  filter((SCR_Rep1_EPKM > 0 & SCR_Rep2_EPKM > 0) |
+           (SCR_Rep1_EPKM > 0 & SCR_Rep3_EPKM > 0) |
+           (SCR_Rep2_EPKM > 0 & SCR_Rep3_EPKM > 0))
+
+
+
+shRNA33_Rep1_epkm <- calculate_epkm(shRNA33_Rep1, "shRNA33_Rep1")
+shRNA33_Rep2_epkm <- calculate_epkm(shRNA33_Rep2, "shRNA33_Rep2")
+shRNA33_Rep3_epkm <- calculate_epkm(shRNA33_Rep3, "shRNA33_Rep3")
+
+shRNA33_epkm <- shRNA33_Rep1_epkm %>%
+  full_join(shRNA33_Rep2_epkm, by = "Geneid") %>%
+  full_join(shRNA33_Rep3_epkm, by = "Geneid") %>%
+  replace_na(list(shRNA33_Rep1_EPKM = 0, shRNA33_Rep2_EPKM = 0, shRNA33_Rep3_EPKM = 0)) %>%
+  filter((shRNA33_Rep1_EPKM > 0 & shRNA33_Rep2_EPKM > 0) |
+           (shRNA33_Rep1_EPKM > 0 & shRNA33_Rep3_EPKM > 0) |
+           (shRNA33_Rep2_EPKM > 0 & shRNA33_Rep3_EPKM > 0))
+
+
+shRNA37_Rep1_epkm <- calculate_epkm(shRNA37_Rep1, "shRNA37_Rep1")
+shRNA37_Rep2_epkm <- calculate_epkm(shRNA37_Rep2, "shRNA37_Rep2")
+shRNA37_Rep3_epkm <- calculate_epkm(shRNA37_Rep3, "shRNA37_Rep3")
+
+shRNA37_epkm <- shRNA37_Rep1_epkm %>%
+  full_join(shRNA37_Rep2_epkm, by = "Geneid") %>%
+  full_join(shRNA37_Rep3_epkm, by = "Geneid") %>%
+  replace_na(list(shRNA37_Rep1_EPKM = 0, shRNA37_Rep2_EPKM = 0, shRNA37_Rep3_EPKM = 0)) %>%
+  filter((shRNA37_Rep1_EPKM > 0 & shRNA37_Rep2_EPKM > 0) |
+           (shRNA37_Rep1_EPKM > 0 & shRNA37_Rep3_EPKM > 0) |
+           (shRNA37_Rep2_EPKM > 0 & shRNA37_Rep3_EPKM > 0))
+
+
+# Join Geneid_epkm data frames by Geneid
+gene_epkm <- SCR_epkm %>%
+  full_join(shRNA33_epkm, by = "Geneid") %>%
+  full_join(shRNA37_epkm, by = "Geneid") 
+
+
+
+
+```
+
+
+### EPKM scatter plot
+
+#### SCR
+```{r}
+# Load required libraries
+library(ggplot2)
+library(dplyr)
+library(ggpmisc)
+
+
+
+p1 <- ggplot(SCR_epkm, aes(x = log2(SCR_Rep1_EPKM + 1), y = log2(SCR_Rep2_EPKM + 1))) +
+  geom_point(size = 2, alpha = 0.5, color = "#2277B5") +
+  stat_poly_eq(aes(label = paste(stat(adj.rr.label), stat(p.value.label), sep = "*\", \"*")),
+               formula = y ~ x,
+               rr.digits = 3, p.digits = 3,
+               parse = TRUE,
+               label.x = "left", label.y = "top") +
+  labs(title = "control", x = "log2(EPKM + 1) rep1", y = "log2(EPKM + 1) rep2") +
+  theme_classic() +
+  theme(aspect.ratio = 1)
+
+
+# SCR_Rep1_Rep3
+
+p2 <- ggplot(SCR_epkm, aes(x = log2(SCR_Rep1_EPKM + 1), y = log2(SCR_Rep3_EPKM + 1))) +
+  geom_point(size = 2, alpha = 0.5, color = "#2277B5") +
+  stat_poly_eq(aes(label = paste(stat(adj.rr.label), stat(p.value.label), sep = "*\", \"*")),
+               formula = y ~ x,
+               rr.digits = 3, p.digits = 3,
+               parse = TRUE,
+               label.x = "left", label.y = "top") +
+  labs(title = "control", x = "log2(EPKM + 1) rep1", y = "log2(EPKM + 1) rep3") +
+  theme_classic() +
+  theme(aspect.ratio = 1)
+
+
+# SCR_Rep2_Rep3
+
+p3 <- ggplot(SCR_epkm, aes(x = log2(SCR_Rep2_EPKM + 1), y = log2(SCR_Rep3_EPKM + 1))) +
+  geom_point(size = 2, alpha = 0.5, color = "#2277B5") +
+  stat_poly_eq(aes(label = paste(stat(adj.rr.label), stat(p.value.label), sep = "*\", \"*")),
+               formula = y ~ x,
+               rr.digits = 3, p.digits = 3,
+               parse = TRUE,
+               label.x = "left", label.y = "top") +
+  labs(title = "control", x = "log2(EPKM + 1) rep2", y = "log2(EPKM + 1) rep3") +
+  theme_classic() +
+  theme(aspect.ratio = 1)
+
+
+library(gridExtra)
+
+# combine the plots
+control_epkm_scattar <- grid.arrange(p1, p2, p3, nrow = 1)
+
+
+ggsave("output/Ste05.control_EPKM_CDS_3UTR_scattar.pdf", plot = control_epkm_scattar, device = "pdf", width = 8, height = 6)
+
+```
+
+
+#### shRNA33
+
+```{r}
+# Load required libraries
+library(ggplot2)
+library(dplyr)
+library(ggpmisc)
+
+
+
+p1 <- ggplot(shRNA33_epkm, aes(x = log2(shRNA33_Rep1_EPKM + 1), y = log2(shRNA33_Rep2_EPKM + 1))) +
+  geom_point(size = 2, alpha = 0.5, color = "#2277B5") +
+  stat_poly_eq(aes(label = paste(stat(adj.rr.label), stat(p.value.label), sep = "*\", \"*")),
+               formula = y ~ x,
+               rr.digits = 3, p.digits = 3,
+               parse = TRUE,
+               label.x = "left", label.y = "top") +
+  labs(title = "KD-33", x = "log2(EPKM + 1) rep1", y = "log2(EPKM + 1) rep2") +
+  theme_classic() +
+  theme(aspect.ratio = 1)
+
+
+# shRNA33_Rep1_Rep3
+
+p2 <- ggplot(shRNA33_epkm, aes(x = log2(shRNA33_Rep1_EPKM + 1), y = log2(shRNA33_Rep3_EPKM + 1))) +
+  geom_point(size = 2, alpha = 0.5, color = "#2277B5") +
+  stat_poly_eq(aes(label = paste(stat(adj.rr.label), stat(p.value.label), sep = "*\", \"*")),
+               formula = y ~ x,
+               rr.digits = 3, p.digits = 3,
+               parse = TRUE,
+               label.x = "left", label.y = "top") +
+  labs(title = "KD-33", x = "log2(EPKM + 1) rep1", y = "log2(EPKM + 1) rep3") +
+  theme_classic() +
+  theme(aspect.ratio = 1)
+
+
+# shRNA33_Rep2_Rep3
+
+p3 <- ggplot(shRNA33_epkm, aes(x = log2(shRNA33_Rep2_EPKM + 1), y = log2(shRNA33_Rep3_EPKM + 1))) +
+  geom_point(size = 2, alpha = 0.5, color = "#2277B5") +
+  stat_poly_eq(aes(label = paste(stat(adj.rr.label), stat(p.value.label), sep = "*\", \"*")),
+               formula = y ~ x,
+               rr.digits = 3, p.digits = 3,
+               parse = TRUE,
+               label.x = "left", label.y = "top") +
+  labs(title = "KD-33", x = "log2(EPKM + 1) rep2", y = "log2(EPKM + 1) rep3") +
+  theme_classic() +
+  theme(aspect.ratio = 1)
+
+
+library(gridExtra)
+
+# combine the plots
+KD33_epkm_scattar <- grid.arrange(p1, p2, p3, nrow = 1)
+
+ggsave("output/Step05.KD33_EPKM_CDS_3UTR_scattar.pdf", plot = KD33_epkm_scattar, device = "pdf", width = 8, height = 6)
+```
+
+
+#### shRNA37
+
+
+```{r}
+# Load required libraries
+library(ggplot2)
+library(dplyr)
+library(ggpmisc)
+
+p1 <- ggplot(shRNA37_epkm, aes(x = log2(shRNA37_Rep1_EPKM + 1), y = log2(shRNA37_Rep2_EPKM + 1))) +
+  geom_point(size = 2, alpha = 0.5, color = "#2277B5") +
+  stat_poly_eq(aes(label = paste(stat(adj.rr.label), stat(p.value.label), sep = "*\", \"*")),
+               formula = y ~ x,
+               rr.digits = 3, p.digits = 3,
+               parse = TRUE,
+               label.x = "left", label.y = "top") +
+  labs(title = "KD-37", x = "log2(EPKM + 1) rep1", y = "log2(EPKM + 1) rep2") +
+  theme_classic() +
+  theme(aspect.ratio = 1)
+
+
+# shRNA37_Rep1_Rep3
+p2 <- ggplot(shRNA37_epkm, aes(x = log2(shRNA37_Rep1_EPKM + 1), y = log2(shRNA37_Rep3_EPKM + 1))) +
+  geom_point(size = 2, alpha = 0.5, color = "#2277B5") +
+  stat_poly_eq(aes(label = paste(stat(adj.rr.label), stat(p.value.label), sep = "*\", \"*")),
+               formula = y ~ x,
+               rr.digits = 3, p.digits = 3,
+               parse = TRUE,
+               label.x = "left", label.y = "top") +
+  labs(title = "KD-37", x = "log2(EPKM + 1) rep1", y = "log2(EPKM + 1) rep3") +
+  theme_classic() +
+  theme(aspect.ratio = 1)
+
+
+# shRNA37_Rep2_Rep3
+p3 <- ggplot(shRNA37_epkm, aes(x = log2(shRNA37_Rep2_EPKM + 1), y = log2(shRNA37_Rep3_EPKM + 1))) +
+  geom_point(size = 2, alpha = 0.5, color = "#2277B5") +
+  stat_poly_eq(aes(label = paste(stat(adj.rr.label), stat(p.value.label), sep = "*\", \"*")),
+               formula = y ~ x,
+               rr.digits = 3, p.digits = 3,
+               parse = TRUE,
+               label.x = "left", label.y = "top") +
+  labs(title = "KD-37", x = "log2(EPKM + 1) rep2", y = "log2(EPKM + 1) rep3") +
+  theme_classic() +
+  theme(aspect.ratio = 1)
+
+
+library(gridExtra)
+
+# combine the plots
+KD37_epkm_scattar <- grid.arrange(p1, p2, p3, nrow = 1)
+
+ggsave("output/Step05.KD37_EPKM_CDS_3UTR_scattar.pdf", plot = KD37_epkm_scattar, device = "pdf", width = 8, height = 6)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+### Quartile_BoxPlot 
+
+for the quartile analysis with epkm --> we should use just epkm for scramble --> since the KD affects editing frequency + editing sites.
+quartile bins is defined based on the average value of 3 SCR samples from high to low.
+```{r}
+gene_epkm <- gene_epkm %>%  
+  rename_all(~ gsub("_EPKM", "", .)) %>%
+  mutate_all(~ ifelse(is.na(.), 0, .)) 
+
+```
+
+#### SCR, shRNA33, shRNA37 cut by SCR EPKM value
+
+
+```{r}
+library(tidyverse)
+library(rstatix)
+library(ggpubr)
+
+
+gene_epkm_bin <- gene_epkm %>%
+  arrange(desc((SCR_Rep1 + SCR_Rep2 + SCR_Rep3)/3))%>% 
+  left_join(Geneid_Genename, by = "Geneid") %>%
+  relocate(Genename, .after = Geneid)
+
+# Calculate the number of rows in each bin 
+rows_per_bin <- nrow(gene_epkm_bin) / 4
+# Print the number of genes in each quartile
+print(paste("Each quartile genes number:", rows_per_bin))
+
+# Add a new "bin" column based on the row index
+gene_epkm_bin <- gene_epkm_bin %>%
+  mutate(bin = as.integer((row_number() - 1) / rows_per_bin) + 1)
+
+# Reshape the data to long format
+long_data <- gene_epkm_bin %>%
+  gather(key = "sample_Rep", value = "EPKM", SCR_Rep1, SCR_Rep2, SCR_Rep3, shRNA33_Rep1, shRNA33_Rep2, shRNA33_Rep3, shRNA37_Rep1, shRNA37_Rep2, shRNA37_Rep3) %>%
+  mutate(sample_group = case_when(
+    grepl("SCR", sample_Rep) ~ "SCR",
+    grepl("shRNA33", sample_Rep) ~ "shRNA33",
+    grepl("shRNA37", sample_Rep) ~ "shRNA37"
+  ))
+
+# Perform pairwise Wilcoxon rank-sum tests
+pairwise_comparisons <- long_data %>%
+  group_by(bin) %>%
+  pairwise_wilcox_test(EPKM ~ sample_group, p.adjust.method = "bonferroni")
+
+# Filter the significant comparisons (e.g., p-value < 0.05)
+EPKM_3_significant_comparisons <- pairwise_comparisons %>%
+  filter(p.adj < 0.05)
+
+print(EPKM_3_significant_comparisons)
+
+# Calculate the average EPKM value for each sample group in each bin
+average_EPKM <- long_data %>%
+  group_by(bin, sample_group) %>%
+  summarize(mean_EPKM = mean(EPKM),
+            median_EPKM = median(EPKM),
+            .groups = "drop")
+
+
+
+
+
+# Print the average EPKM values
+print(average_EPKM)
+
+
+# save as excel
+library(openxlsx)
+
+# Create a new workbook
+wb <- createWorkbook()
+
+# Add the data frames as sheets to the workbook
+## sheet1
+addWorksheet(wb, "gene_epkm")
+writeData(wb, "gene_epkm", gene_epkm)
+
+## sheet2
+addWorksheet(wb, "EPKM_bins")
+writeData(wb, "EPKM_bins", long_data)
+
+## sheet3
+addWorksheet(wb, "3groups_significant")
+writeData(wb, "3groups_significant", EPKM_3_significant_comparisons)
+
+## sheet4
+addWorksheet(wb, "average_EPKM")
+writeData(wb, "average_EPKM", average_EPKM)
+
+# Save the workbook to a file
+saveWorkbook(wb, "output/Step05.EPKM_CDS_3UTR_Quartile_binByEPKM_3groups.xlsx", overwrite = TRUE)
+
+
+
+
+# Generate the box plot
+colors <- c("#C1C0C0", "#76D7FF", "#1796FF")
+
+
+EPKM_Quartile_binByEPKM_3groups <- ggplot(long_data, aes(x = as.factor(bin), y = log2(EPKM + 1), fill = sample_group)) +
+  geom_boxplot(color = "grey50", outlier.size = 0.5) +
+  labs(x = "Quartile", y = "log2(EPKM + 1)", title = "EPKM (CDS+3'UTR) rank by control EPKM value") +
+  scale_fill_manual(values = colors, 
+                    labels = c("control", "KD-33", "KD-37"),
+                    name = "") +
+  theme_classic() +
+  theme(legend.position = c(0.82, 0.95),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.background = element_rect(fill = "transparent", color = NA),
+        legend.text = element_text(size = 9),
+        legend.title = element_text(size = 9),
+        legend.key.size = unit(0.3, "cm"),
+        aspect.ratio = 2/1)
+
+
+
+ggsave("output/Step05.EPKM_CDS_3UTR_Quartile_binByEPKM_3groups.pdf", plot = EPKM_Quartile_binByEPKM_3groups, device = "pdf", width = 8, height = 6)
+
+
+
+
+```
+
+
+#### SCR, shRNA cut by SCR EPKM value
+
+
+```{r}
+# Reshape the data to long format
+long_data <- gene_epkm_bin %>%
+  gather(key = "sample_Rep", value = "EPKM", SCR_Rep1, SCR_Rep2, SCR_Rep3, shRNA33_Rep1, shRNA33_Rep2, shRNA33_Rep3, shRNA37_Rep1, shRNA37_Rep2, shRNA37_Rep3) %>%
+  mutate(sample_group = case_when(
+    grepl("SCR", sample_Rep) ~ "SCR",
+    grepl("shRNA33", sample_Rep) ~ "shRNA33",
+    grepl("shRNA37", sample_Rep) ~ "shRNA37"
+  )) %>%
+  mutate(combined_group = case_when(
+    sample_group == "SCR" ~ "SCR",
+    sample_group %in% c("shRNA33", "shRNA37") ~ "shRNA"
+  ))
+
+# Perform pairwise Wilcoxon rank-sum tests
+pairwise_comparisons <- long_data %>%
+  group_by(bin) %>%
+  pairwise_wilcox_test(EPKM ~ combined_group, p.adjust.method = "bonferroni", pool.sd = FALSE)
+
+# Filter the significant comparisons (e.g., p-value < 0.05)
+EPKM_2_significant_comparisons <- pairwise_comparisons %>%
+  filter(p.adj < 0.05)
+
+print(EPKM_2_significant_comparisons)
+
+# Calculate the average EPKM value for each sample group in each bin
+average_EPKM <- long_data %>%
+  group_by(bin, combined_group) %>%
+  summarize(mean_EPKM = mean(EPKM),
+            median_EPKM = median(EPKM),
+            .groups = "drop")
+
+
+# Print the average EPKM values
+print(average_EPKM)
+
+
+# save as excel
+library(openxlsx)
+
+# Create a new workbook
+wb <- createWorkbook()
+
+# Add the data frames as sheets to the workbook
+## sheet1
+addWorksheet(wb, "gene_epkm")
+writeData(wb, "gene_epkm", gene_epkm)
+
+## sheet2
+addWorksheet(wb, "EPKM_bins")
+writeData(wb, "EPKM_bins", long_data)
+
+## sheet3
+addWorksheet(wb, "2groups_significant")
+writeData(wb, "2groups_significant", EPKM_2_significant_comparisons)
+
+## sheet4
+addWorksheet(wb, "average_EPKM")
+writeData(wb, "average_EPKM", average_EPKM)
+
+# Save the workbook to a file
+saveWorkbook(wb, "output/Step05.EPKM_CDS_3UTR_Quartile_binByEPKM_2groups.xlsx", overwrite = TRUE)
+
+
+
+# Generate the box plot
+colors <- c("#C1C0C0", "#1796FF")
+
+
+EPKM_Quartile_binByEPKM_2groups <- ggplot(long_data, aes(x = as.factor(bin), y = log2(EPKM + 1), fill = combined_group)) +
+  geom_boxplot(color = "grey50", outlier.size = 0.5) +
+  labs(x = "Quartile", y = "log2(EPKM + 1)", title = "EPKM (CDS+3'UTR) rank by control EPKM value") +
+  scale_fill_manual(values = colors, labels = c("control", "KD"), name = "") +
+  theme_classic() +
+  theme(legend.position = c(0.82, 0.95),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.background = element_rect(fill = "transparent", color = NA),
+        legend.text = element_text(size = 9),
+        legend.title = element_text(size = 9),
+        legend.key.size = unit(0.3, "cm"),
+        aspect.ratio = 2/1)
+
+ggsave("output/Step05.EPKM_CDS_3UTR_Quartile_binByEPKM_2groups.pdf", plot = EPKM_Quartile_binByEPKM_2groups, device = "pdf", width = 8, height = 6)
+
+
+
+
+save(gene_epkm_bin, file = "output/Step05.EPKM_CDS_3UTR_SCR_shRNA_EPKMbin.rdata")
+
+
+```
+
+
+
+
+
+
+
+
+# 1. EPKM *10e3
+
+per_million_mapped_read_counts = sum(sample_sites_counts$gene_expression_counts) / 1e6
+
+ EPKM = 10e3 * (sum_edited_reads / per_million_mapped_read_counts) / (Length / 1e3) 
+
+## 2.1 EPKM-CDS -*10e3
+
+```{r}
+library(dplyr)
+
+# Define function to calculate EPKM for a given sample data frame
+calculate_epkm <- function(sample_df, sample_name) {
+  # Rename columns and join with gene count data frame
+  sample_sites_counts <- sample_df %>%
+    left_join(gene_count, by = "Geneid") %>%
+    rename(gene_expression_counts = !!sym(sample_name),
+          coverage := paste0(sample_name, "_coverage"),
+          editRatio := paste0(sample_name, "_editRatio"),
+          score := paste0(sample_name, "_score")) %>% 
+    dplyr::select(chr, start, Geneid, Genename, biotype, Length, strand, coverage, editRatio, score, gene_expression_counts) %>%
+    distinct() %>%
+    filter(biotype %in% c("CDS")) %>%
+    filter(gene_expression_counts > 0) 
+  
+  # Calculate edited reads count and sum them for each gene
+  sample_edited_reads <- sample_sites_counts %>%
+    mutate(across(c(coverage, editRatio), as.numeric)) %>% # convert to numeric
+    mutate(edited_reads = coverage * editRatio) %>%
+    group_by(Geneid, Length, gene_expression_counts) %>%
+    summarise(sum_edited_reads = sum(edited_reads), .groups = "drop")
+  
+  # Calculate EPKM
+  
+  sample_epkm <- sample_edited_reads %>%
+    mutate(
+      per_million_mapped_read_counts = sum(sample_sites_counts$gene_expression_counts) / 1e6,
+      gene_length_kb = Length / 1e3,
+      EPKM = 1e3 * (sum_edited_reads / per_million_mapped_read_counts) / gene_length_kb
+    ) %>%
+    dplyr::select(Geneid, EPKM) %>%
+    rename(!!paste0(sample_name, "_EPKM") := EPKM)
+  
+  return(sample_epkm)
+}
+
+
+
+# Calculate EPKM for each sample
+SCR_Rep1_epkm <- calculate_epkm(SCR_Rep1, "SCR_Rep1") 
+SCR_Rep2_epkm <- calculate_epkm(SCR_Rep2, "SCR_Rep2")
+SCR_Rep3_epkm <- calculate_epkm(SCR_Rep3, "SCR_Rep3")
+
+SCR_epkm <- SCR_Rep1_epkm %>%
+  full_join(SCR_Rep2_epkm, by = "Geneid") %>%
+  full_join(SCR_Rep3_epkm, by = "Geneid") %>%
+  replace_na(list(SCR_Rep1_EPKM = 0, SCR_Rep2_EPKM = 0, SCR_Rep3_EPKM = 0)) %>%
+  filter((SCR_Rep1_EPKM > 0 & SCR_Rep2_EPKM > 0) |
+           (SCR_Rep1_EPKM > 0 & SCR_Rep3_EPKM > 0) |
+           (SCR_Rep2_EPKM > 0 & SCR_Rep3_EPKM > 0))
+
+
+
+shRNA33_Rep1_epkm <- calculate_epkm(shRNA33_Rep1, "shRNA33_Rep1")
+shRNA33_Rep2_epkm <- calculate_epkm(shRNA33_Rep2, "shRNA33_Rep2")
+shRNA33_Rep3_epkm <- calculate_epkm(shRNA33_Rep3, "shRNA33_Rep3")
+
+shRNA33_epkm <- shRNA33_Rep1_epkm %>%
+  full_join(shRNA33_Rep2_epkm, by = "Geneid") %>%
+  full_join(shRNA33_Rep3_epkm, by = "Geneid") %>%
+  replace_na(list(shRNA33_Rep1_EPKM = 0, shRNA33_Rep2_EPKM = 0, shRNA33_Rep3_EPKM = 0)) %>%
+  filter((shRNA33_Rep1_EPKM > 0 & shRNA33_Rep2_EPKM > 0) |
+           (shRNA33_Rep1_EPKM > 0 & shRNA33_Rep3_EPKM > 0) |
+           (shRNA33_Rep2_EPKM > 0 & shRNA33_Rep3_EPKM > 0))
+
+
+shRNA37_Rep1_epkm <- calculate_epkm(shRNA37_Rep1, "shRNA37_Rep1")
+shRNA37_Rep2_epkm <- calculate_epkm(shRNA37_Rep2, "shRNA37_Rep2")
+shRNA37_Rep3_epkm <- calculate_epkm(shRNA37_Rep3, "shRNA37_Rep3")
+
+shRNA37_epkm <- shRNA37_Rep1_epkm %>%
+  full_join(shRNA37_Rep2_epkm, by = "Geneid") %>%
+  full_join(shRNA37_Rep3_epkm, by = "Geneid") %>%
+  replace_na(list(shRNA37_Rep1_EPKM = 0, shRNA37_Rep2_EPKM = 0, shRNA37_Rep3_EPKM = 0)) %>%
+  filter((shRNA37_Rep1_EPKM > 0 & shRNA37_Rep2_EPKM > 0) |
+           (shRNA37_Rep1_EPKM > 0 & shRNA37_Rep3_EPKM > 0) |
+           (shRNA37_Rep2_EPKM > 0 & shRNA37_Rep3_EPKM > 0))
+
+
+# Join Geneid_epkm data frames by Geneid
+gene_epkm <- SCR_epkm %>%
+  full_join(shRNA33_epkm, by = "Geneid") %>%
+  full_join(shRNA37_epkm, by = "Geneid") 
+
+
+
+
+```
+
+
+
+### Quartile_BoxPlot 
+
+for the quartile analysis with epkm --> we should use just epkm for scramble --> since the KD affects editing frequency + editing sites.
+quartile bins is defined based on the average value of 3 SCR samples from high to low.
+```{r}
+gene_epkm <- gene_epkm %>%  
+  rename_all(~ gsub("_EPKM", "", .)) %>%
+  mutate_all(~ ifelse(is.na(.), 0, .)) 
+
+```
+
+#### SCR, shRNA33, shRNA37 cut by SCR EPKM value
+
+
+```{r}
+library(tidyverse)
+library(rstatix)
+library(ggpubr)
+
+
+gene_epkm_bin <- gene_epkm %>%
+  arrange(desc((SCR_Rep1 + SCR_Rep2 + SCR_Rep3)/3))%>% 
+  left_join(Geneid_Genename, by = "Geneid") %>%
+  relocate(Genename, .after = Geneid)
+
+# Calculate the number of rows in each bin 
+rows_per_bin <- nrow(gene_epkm_bin) / 4
+# Print the number of genes in each quartile
+print(paste("Each quartile genes number:", rows_per_bin))
+
+# Add a new "bin" column based on the row index
+gene_epkm_bin <- gene_epkm_bin %>%
+  mutate(bin = as.integer((row_number() - 1) / rows_per_bin) + 1)
+
+# Reshape the data to long format
+long_data <- gene_epkm_bin %>%
+  gather(key = "sample_Rep", value = "EPKM", SCR_Rep1, SCR_Rep2, SCR_Rep3, shRNA33_Rep1, shRNA33_Rep2, shRNA33_Rep3, shRNA37_Rep1, shRNA37_Rep2, shRNA37_Rep3) %>%
+  mutate(sample_group = case_when(
+    grepl("SCR", sample_Rep) ~ "SCR",
+    grepl("shRNA33", sample_Rep) ~ "shRNA33",
+    grepl("shRNA37", sample_Rep) ~ "shRNA37"
+  ))
+
+# Perform pairwise Wilcoxon rank-sum tests
+pairwise_comparisons <- long_data %>%
+  group_by(bin) %>%
+  pairwise_wilcox_test(EPKM ~ sample_group, p.adjust.method = "bonferroni")
+
+# Filter the significant comparisons (e.g., p-value < 0.05)
+EPKM_3_significant_comparisons <- pairwise_comparisons %>%
+  filter(p.adj < 0.05)
+
+print(EPKM_3_significant_comparisons)
+
+# Calculate the average EPKM value for each sample group in each bin
+average_EPKM <- long_data %>%
+  group_by(bin, sample_group) %>%
+  summarize(mean_EPKM = mean(EPKM),
+            median_EPKM = median(EPKM),
+            .groups = "drop")
+
+
+
+
+
+# Print the average EPKM values
+print(average_EPKM)
+
+
+# save as excel
+library(openxlsx)
+
+# Create a new workbook
+wb <- createWorkbook()
+
+# Add the data frames as sheets to the workbook
+## sheet1
+addWorksheet(wb, "gene_epkm")
+writeData(wb, "gene_epkm", gene_epkm)
+
+## sheet2
+addWorksheet(wb, "EPKM_bins")
+writeData(wb, "EPKM_bins", long_data)
+
+## sheet3
+addWorksheet(wb, "3groups_significant")
+writeData(wb, "3groups_significant", EPKM_3_significant_comparisons)
+
+## sheet4
+addWorksheet(wb, "average_EPKM")
+writeData(wb, "average_EPKM", average_EPKM)
+
+# Save the workbook to a file
+saveWorkbook(wb, "output/Step05.EPKMe3_CDS_Quartile_binByEPKM_3groups.xlsx", overwrite = TRUE)
+
+
+
+
+# Generate the box plot
+colors <- c("#C1C0C0", "#76D7FF", "#1796FF")
+
+
+EPKM_Quartile_binByEPKM_3groups <- ggplot(long_data, aes(x = as.factor(bin), y = log2(EPKM + 1), fill = sample_group)) +
+  geom_boxplot(color = "grey50", outlier.size = 0.5) +
+  labs(x = "Quartile", y = "log2(EPKM * 1e3 + 1)", title = "EPKM (CDS) rank by control EPKM value") +
+  scale_fill_manual(values = colors, 
+                    labels = c("control", "KD-33", "KD-37"),
+                    name = "") +
+  theme_classic() +
+  theme(legend.position = c(0.82, 0.95),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.background = element_rect(fill = "transparent", color = NA),
+        legend.text = element_text(size = 9),
+        legend.title = element_text(size = 9),
+        legend.key.size = unit(0.3, "cm"),
+        aspect.ratio = 2/1)
+
+
+
+ggsave("output/Step05.EPKMe3_CDS_Quartile_binByEPKM_3groups.pdf", plot = EPKM_Quartile_binByEPKM_3groups, device = "pdf", width = 8, height = 6)
+
+
+
+
+```
+
+
+#### SCR, shRNA cut by SCR EPKM value
+
+
+```{r}
+# Reshape the data to long format
+long_data <- gene_epkm_bin %>%
+  gather(key = "sample_Rep", value = "EPKM", SCR_Rep1, SCR_Rep2, SCR_Rep3, shRNA33_Rep1, shRNA33_Rep2, shRNA33_Rep3, shRNA37_Rep1, shRNA37_Rep2, shRNA37_Rep3) %>%
+  mutate(sample_group = case_when(
+    grepl("SCR", sample_Rep) ~ "SCR",
+    grepl("shRNA33", sample_Rep) ~ "shRNA33",
+    grepl("shRNA37", sample_Rep) ~ "shRNA37"
+  )) %>%
+  mutate(combined_group = case_when(
+    sample_group == "SCR" ~ "SCR",
+    sample_group %in% c("shRNA33", "shRNA37") ~ "shRNA"
+  ))
+
+# Perform pairwise Wilcoxon rank-sum tests
+pairwise_comparisons <- long_data %>%
+  group_by(bin) %>%
+  pairwise_wilcox_test(EPKM ~ combined_group, p.adjust.method = "bonferroni", pool.sd = FALSE)
+
+# Filter the significant comparisons (e.g., p-value < 0.05)
+EPKM_2_significant_comparisons <- pairwise_comparisons %>%
+  filter(p.adj < 0.05)
+
+print(EPKM_2_significant_comparisons)
+
+# Calculate the average EPKM value for each sample group in each bin
+average_EPKM <- long_data %>%
+  group_by(bin, combined_group) %>%
+  summarize(mean_EPKM = mean(EPKM),
+            median_EPKM = median(EPKM),
+            .groups = "drop")
+
+
+# Print the average EPKM values
+print(average_EPKM)
+
+
+# save as excel
+library(openxlsx)
+
+# Create a new workbook
+wb <- createWorkbook()
+
+# Add the data frames as sheets to the workbook
+## sheet1
+addWorksheet(wb, "gene_epkm")
+writeData(wb, "gene_epkm", gene_epkm)
+
+## sheet2
+addWorksheet(wb, "EPKM_bins")
+writeData(wb, "EPKM_bins", long_data)
+
+## sheet3
+addWorksheet(wb, "2groups_significant")
+writeData(wb, "2groups_significant", EPKM_2_significant_comparisons)
+
+## sheet4
+addWorksheet(wb, "average_EPKM")
+writeData(wb, "average_EPKM", average_EPKM)
+
+# Save the workbook to a file
+saveWorkbook(wb, "output/Step05.EPKMe3_CDS_Quartile_binByEPKM_2groups.xlsx", overwrite = TRUE)
+
+
+
+# Generate the box plot
+colors <- c("#C1C0C0", "#1796FF")
+
+
+EPKM_Quartile_binByEPKM_2groups <- ggplot(long_data, aes(x = as.factor(bin), y = log2(EPKM + 1), fill = combined_group)) +
+  geom_boxplot(color = "grey50", outlier.size = 0.5) +
+  labs(x = "Quartile", y = "log2(EPKM * 1e3 + 1)", title = "EPKM (CDS) rank by control EPKM value") +
+  scale_fill_manual(values = colors, labels = c("control", "KD"), name = "") +
+  theme_classic() +
+  theme(legend.position = c(0.82, 0.95),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.background = element_rect(fill = "transparent", color = NA),
+        legend.text = element_text(size = 9),
+        legend.title = element_text(size = 9),
+        legend.key.size = unit(0.3, "cm"),
+        aspect.ratio = 2/1)
+
+ggsave("output/Step05.EPKMe3_CDS_Quartile_binByEPKM_2groups.pdf", plot = EPKM_Quartile_binByEPKM_2groups, device = "pdf", width = 8, height = 6)
+
+
+
+
+save(gene_epkm_bin, file = "output/Step05.EPKMe3_CDS_SCR_shRNA_EPKMbin.rdata")
+
+
+```
+
+
+
+
+
+
+
+
+### Differential results
+
+Using normalized gene expression values rather than raw counts. 
+DESeq2 requires raw count data as input for its statistical model to perform differential expression analysis. 
+Here, we can use other methods for differential expression analysis that can handle normalized gene expression data, such as limma-voom or edgeR.
+
+```{r}
+gene_epkm <- gene_epkm %>%  
+  column_to_rownames(var = "Geneid")
+
+
+# Load necessary libraries
+library(limma)
+
+library(ggplot2)
+
+# Subset the gene_epkm data frame to include only rows where the row sum is greater than 0
+gene_epkm <- gene_epkm[which(rowSums(gene_epkm) > 0),]
+
+# Display the dimensions of the resulting data frame
+dim(gene_epkm)
+
+# Create a factor variable condition with three levels
+condition <- factor(paste(rep(c("SCR", "shRNA33", "shRNA37"), each = 3)))
+
+coldata <- data.frame(row.names = colnames(gene_epkm), condition)
+
+# Create a DGEList object from the normalized gene expression data
+dge <- DGEList(counts = gene_epkm)
+
+
+
+# Convert the normalized data to log2-counts per million (logCPM) using limma's voom function
+v <- voom(dge, normalize.method = "none")
+
+# Set up the design matrix for your experimental conditions
+design <- model.matrix(~0 + condition)
+colnames(design) <- levels(condition)
+
+# Fit the linear model and perform differential expression analysis
+fit <- lmFit(v, design)
+contrast.matrix <- makeContrasts(shRNA33_vs_SCR = shRNA33 - SCR, shRNA37_vs_SCR = shRNA37 - SCR, shRNA37_vs_shRNA33 = shRNA37 - shRNA33, levels = design)
+fit2 <- contrasts.fit(fit, contrast.matrix)
+fit2 <- eBayes(fit2)
+
+# Extract the top differentially expressed genes for each contrast
+res_shRNA33_SCR <- topTable(fit2, number = Inf, coef = "shRNA33_vs_SCR")
+res_shRNA37_SCR <- topTable(fit2, number = Inf, coef = "shRNA37_vs_SCR")
+res_shRNA37_shRNA33 <- topTable(fit2, number = Inf, coef = "shRNA37_vs_shRNA33")
+
+# Perform PCA on the logCPM values
+pca <- prcomp(t(v$E), scale = TRUE)
+
+# Create a data frame with the first two principal components and the sample conditions
+pca_df <- data.frame(Sample = rownames(pca$x),
+                     PC1 = pca$x[, 1],
+                     PC2 = pca$x[, 2],
+                     Condition = coldata$condition)
+
+# Plot the PCA with ggplot2
+ggplot(pca_df, aes(x = PC1, y = PC2, color = Condition)) +
+  geom_point(size = 3) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+  labs(title = "PCA plot", x = "PC1", y = "PC2") +
+  scale_color_discrete(name = "Condition")
+
+
+
+
+
+
+
+
+# Extract the replicate information from the sample names
+pca_df$Replicate <- gsub(".*(Rep\\d+).*", "\\1", pca_df$Sample)
+
+# Plot the PCA with ggplot2 and add sample labels
+ggplot(pca_df, aes(x = PC1, y = PC2, color = Condition)) +
+  geom_point(size = 3) +
+  geom_text(aes(label = Replicate), hjust = 0.3, vjust = 1.3, size = 3) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+  labs(title = "PCA plot", x = "PC1", y = "PC2") +
+  scale_color_discrete(name = "Condition")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# create a factor variable condition with three levels
+condition2 <- factor(c("SCR", "SCR", "SCR", "shRNA", "shRNA", "shRNA", "shRNA", "shRNA", "shRNA"))
+
+
+coldata <- data.frame(row.names = colnames(gene_epkm), condition2)
+
+# Create a DGEList object from the normalized gene expression data
+dge <- DGEList(counts = gene_epkm)
+
+
+
+# Convert the normalized data to log2-counts per million (logCPM) using limma's voom function
+v <- voom(dge, normalize.method = "none")
+
+# Set up the design matrix for your experimental condition2s
+design <- model.matrix(~0 + condition2)
+colnames(design) <- levels(condition2)
+
+# Fit the linear model and perform differential expression analysis
+fit <- lmFit(v, design)
+contrast.matrix <- makeContrasts(shRNA_vs_SCR = shRNA - SCR, levels = design)
+fit2 <- contrasts.fit(fit, contrast.matrix)
+fit2 <- eBayes(fit2)
+
+# Extract the top differentially expressed genes for each contrast
+res_shRNA_SCR <- topTable(fit2, number = Inf, coef = "shRNA_vs_SCR")
+
+
+# Perform PCA on the logCPM values
+pca <- prcomp(t(v$E), scale = TRUE)
+
+# Create a data frame with the first two principal components and the sample condition2s
+pca_df <- data.frame(Sample = rownames(pca$x),
+                     PC1 = pca$x[, 1],
+                     PC2 = pca$x[, 2],
+                     condition2 = coldata$condition2)
+
+# Plot the PCA with ggplot2
+ggplot(pca_df, aes(x = PC1, y = PC2, color = condition2)) +
+  geom_point(size = 3) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+  labs(title = "PCA plot", x = "PC1", y = "PC2") +
+  scale_color_discrete(name = "condition2")
+
+
+
+
+
+
+
+
+
+##when we give the different direction, just base on padj, not FoldChange.
+
+
+library(tidyverse)
+# res_shRNA33_SCR
+res_shRNA33_SCR <- as.data.frame(res_shRNA33_SCR)
+res_shRNA33_SCR <- res_shRNA33_SCR %>% 
+  rownames_to_column(var = "Geneid") %>%
+  left_join(Geneid_Genename, by="Geneid") %>%
+  dplyr::select(Geneid, Genename, log2FoldChange = logFC, pvalue = P.Value, padj = adj.P.Val) %>% 
+  mutate(direction = if_else(
+    padj > 0.05, 'ns', if_else(
+      abs(log2FoldChange) == 0, 'ns', if_else(
+        log2FoldChange > 0, 'up', 'down')
+    ))) %>% 
+  arrange(desc(abs(log2FoldChange))) 
+
+## group count
+group_by(res_shRNA33_SCR, direction) %>%
+  summarise(count=n())
+
+
+# res_shRNA37_SCR
+res_shRNA37_SCR <- as.data.frame(res_shRNA37_SCR)
+res_shRNA37_SCR <- res_shRNA37_SCR %>% 
+  rownames_to_column(var = "Geneid") %>%
+  left_join(Geneid_Genename, by="Geneid") %>%
+  dplyr::select(Geneid, Genename, log2FoldChange = logFC, pvalue = P.Value, padj = adj.P.Val) %>% 
+  mutate(direction = if_else(
+    padj > 0.05, 'ns', if_else(
+      abs(log2FoldChange) == 0, 'ns', if_else(
+        log2FoldChange > 0, 'up', 'down')
+    ))) %>%  
+  arrange(desc(abs(log2FoldChange)))   
+
+## group count
+group_by(res_shRNA37_SCR, direction) %>%
+  summarise(count=n())
+
+
+# res_shRNA37_shRNA33
+res_shRNA37_shRNA33 <- as.data.frame(res_shRNA37_shRNA33)
+res_shRNA37_shRNA33 <- res_shRNA37_shRNA33 %>% 
+  rownames_to_column(var = "Geneid") %>%
+  left_join(Geneid_Genename, by="Geneid") %>%
+  dplyr::select(Geneid, Genename, log2FoldChange = logFC, pvalue = P.Value, padj = adj.P.Val) %>% 
+ mutate(direction = if_else(
+    padj > 0.05, 'ns', if_else(
+      abs(log2FoldChange) == 0, 'ns', if_else(
+        log2FoldChange > 0, 'up', 'down')
+    ))) %>%  
+  arrange(desc(abs(log2FoldChange))) 
+
+## group count
+group_by(res_shRNA37_shRNA33, direction) %>%
+  summarise(count=n())
+
+
+# res_shRNA_SCR
+res_shRNA_SCR <- as.data.frame(res_shRNA_SCR)
+res_shRNA_SCR <- res_shRNA_SCR %>% 
+  rownames_to_column(var = "Geneid") %>%
+  left_join(Geneid_Genename, by="Geneid") %>%
+  dplyr::select(Geneid, Genename, log2FoldChange = logFC, pvalue = P.Value, padj = adj.P.Val) %>% 
+ mutate(direction = if_else(
+    padj > 0.05, 'ns', if_else(
+      abs(log2FoldChange) == 0, 'ns', if_else(
+        log2FoldChange > 0, 'up', 'down')
+    ))) %>%  
+  arrange(desc(abs(log2FoldChange))) 
+
+## group count
+group_by(res_shRNA_SCR, direction) %>%
+  summarise(count=n())
+ 
+
+               
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# save as excel
+library(openxlsx)
+
+# Create a new workbook
+wb <- createWorkbook()
+
+# Add the data frames as sheets to the workbook
+## res_shRNA33_SCR
+addWorksheet(wb, "res_shRNA33_SCR")
+writeData(wb, "res_shRNA33_SCR", res_shRNA33_SCR)
+
+## res_shRNA37_SCR
+addWorksheet(wb, "res_shRNA37_SCR")
+writeData(wb, "res_shRNA37_SCR", res_shRNA37_SCR)
+
+## res_shRNA37_shRNA33
+addWorksheet(wb, "res_shRNA37_shRNA33")
+writeData(wb, "res_shRNA37_shRNA33", res_shRNA37_shRNA33)
+
+## res_shRNA_SCR
+addWorksheet(wb, "res_shRNA_SCR")
+writeData(wb, "res_shRNA_SCR", res_shRNA_SCR)
+
+# Save the workbook to a file
+saveWorkbook(wb, "output/Step05.EPKMe3_CDS_DifferentialAnalysis.xlsx", overwrite = TRUE)
+
+
+
+
+
+
+
+
+res_shRNA33_SCR_EPKM <- res_shRNA33_SCR  
+
+res_shRNA37_SCR_EPKM <- res_shRNA33_SCR 
+
+res_shRNA37_shRNA33_EPKM <- res_shRNA33_SCR 
+
+res_shRNA_SCR_EPKM <- res_shRNA33_SCR 
+
+
+save(res_shRNA33_SCR_EPKM,res_shRNA33_SCR_EPKM,res_shRNA37_SCR_EPKM,res_shRNA37_shRNA33_EPKM,res_shRNA_SCR_EPKM, file = "output/Step05.EPKMe3_CDS_differential.rdata")
+
+```
+
+
+
+### EPKMe3_CDS_differential_volcanoplot
+generate a volcano plot of the EPKM 10^3 highlighting the genes in quartile 1+2 vs. quartile 4
+
+```{r}
+library(ggplot2)
+## group count
+# Calculate counts for each direction category
+direction_counts <- res_shRNA_SCR %>%
+  group_by(direction) %>%
+  summarise(count = n())
+
+# Assuming the data frame is already prepared as you described
+# Replace the column names with the appropriate ones if needed
+volcano_plot <- ggplot(res_shRNA_SCR, aes(x = log2FoldChange, y = -log10(padj), color = direction)) +
+  geom_point(size = 2, alpha = 0.6, shape = 16) +
+  theme_minimal() +
+  labs(title = paste("EPKMe3 CDS - Gene Counts:",
+                     "down", direction_counts$count[direction_counts$direction == "down"],
+                     "ns", direction_counts$count[direction_counts$direction == "ns"],
+                     "up", direction_counts$count[direction_counts$direction == "up"]),
+       x = "log2 Fold Change",
+       y = "-log10 padj-value",
+       color = "Direction") +
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "gray") +  # Add p-value 0.05 line
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray") +  # Add log2 Fold Change = 0 line
+  scale_color_manual(values = c('ns' = 'gray', 'up' = 'red', 'down' = 'blue')) +
+  theme_classic() +
+  theme(aspect.ratio = 1,
+        legend.position = c(0.95, 0.2))   # Set the justification of the legend (0=left, 1=top)
+
+# Display the volcano plot
+print(volcano_plot)
+
+ggsave("output/Step05.EPKMe3_CDS_differential_volcano.pdf", plot = volcano_plot, device = "pdf", width = 8, height = 6)
+
+```
+
+
+
+
+
+
+### EPKMe3_CDS_Differential_quartiles
+
+```{r}
+
+gene_epkm_quartiles <- dplyr::select(gene_epkm_bin, -Genename) %>%
+  relocate(bin,.after = Geneid) %>%
+  rename(quartiles_bin = bin)
+
+
+EPKMe3_CDS_Differential_quartiles <- left_join(res_shRNA_SCR, gene_epkm_quartiles, by = "Geneid") %>%
+  arrange(desc((SCR_Rep1 + SCR_Rep2 + SCR_Rep3)/3))
+
+# save as excel
+library(openxlsx)
+
+# Create a new workbook
+wb <- createWorkbook()
+
+# Add the data frames as sheets to the workbook
+## EPKM_CDS_Differential_quartiles
+addWorksheet(wb, "EPKMe3_CDS_Diff_quartiles")
+writeData(wb, "EPKMe3_CDS_Diff_quartiles", EPKMe3_CDS_Differential_quartiles)
+
+
+## sheet2
+addWorksheet(wb, "2groups_significant")
+writeData(wb, "2groups_significant", EPKM_2_significant_comparisons)
+
+# Save the workbook to a file
+saveWorkbook(wb, "output/Step05.EPKMe3_CDS_DifferentialAnalysis_4quartiles.xlsx", overwrite = TRUE)
+
+
+
+```
+
+### EPKMe3_CDS_differential_volcanoplot highlighting the genes in quartile 1+2 vs. quartile 4
+Using two scatter plot to visualize the quartile genes:
+1. EPKMe3_CDS_differential_volcanoplot highlighting the genes
+1.1 quartile (1+2):red vs. quartile (3+4):blue 
+1.2 quartile (1+2):red vs. quartile (4):blue
+
+2. EPKMe3_CDS_differential_MAplot highlighting the genes:
+2.1 quartile (1+2):red vs. quartile (3+4):blue 
+2.2 quartile (1+2):red vs. quartile (4):blue
+
+```{r}
+
+df <- EPKMe3_CDS_Differential_quartiles
+# Convert the quartiles_bin column to a factor
+df$quartiles_bin <- factor(df$quartiles_bin)
+
+df <- df %>% 
+  mutate(quartile2 = case_when(
+    quartiles_bin %in% c("1", "2") ~ "1+2",
+    quartiles_bin %in% c("3", "4") ~ "3+4"
+  )) %>% 
+  mutate(quartile3 = case_when(
+    quartiles_bin %in% c("1", "2") ~ "1+2",
+    quartiles_bin == "3" ~ "3",
+    quartiles_bin == "4" ~ "4"
+  ))
+
+
+library(ggplot2)
+# Assuming the data frame is already prepared as you described
+# Replace the column names with the appropriate ones if needed
+volcano_4bin_plot <- ggplot(df, aes(x = log2FoldChange, y = -log10(padj), color = quartiles_bin)) +
+  geom_point(size = 2, alpha = 0.6, shape = 16) +
+  theme_minimal() +
+  labs(title = "EPKMe3 CDS",
+       x = "log2 Fold Change",
+       y = "-log10 padj-value",
+       color = "Quartiles") +
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "gray") +  # Add p-value 0.05 line
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray") +  # Add log2 Fold Change = 0 line
+  scale_color_manual(values = c('1' = 'red', '2' = 'green', '3' = 'gray', '4' = 'blue')) +
+  theme_classic() +
+  theme(aspect.ratio = 1,
+        legend.position = c(0.4, 0.9))    # Set the justification of the legend (0=left, 1=top)
+
+
+
+volcano_2bin_plot <- ggplot(df, aes(x = log2FoldChange, y = -log10(padj), color = quartile2)) +
+  geom_point(size = 2, alpha = 0.6, shape = 16) +
+  theme_minimal() +
+  labs(title = "EPKMe3 CDS",
+       x = "log2 Fold Change",
+       y = "-log10 padj-value",
+       color = "Quartiles") +
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "gray") +  # Add p-value 0.05 line
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray") +  # Add log2 Fold Change = 0 line
+  scale_color_manual(values = c('1+2' = 'red', '3+4' = 'blue')) +
+  theme_classic() +
+  theme(aspect.ratio = 1,
+        legend.position = c(0.4, 0.9))    # Set the justification of the legend (0=left, 1=top)
+
+
+
+volcano_3bin_plot <- ggplot(df, aes(x = log2FoldChange, y = -log10(padj), color = quartile3)) +
+  geom_point(size = 2, alpha = 0.6, shape = 16) +
+  theme_minimal() +
+  labs(title = "EPKMe3 CDS",
+       x = "log2 Fold Change",
+       y = "-log10 padj-value",
+       color = "Quartiles") +
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "gray") +  # Add p-value 0.05 line
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray") +  # Add log2 Fold Change = 0 line
+  scale_color_manual(values = c('1+2' = 'red',  '3' = 'gray', '4' = 'blue')) +
+  theme_classic() +
+  theme(aspect.ratio = 1,
+        legend.position = c(0.4, 0.9))   # Set the justification of the legend (0=left, 1=top)
+
+volcano_bin_plot <- ggplot(df %>% filter(quartile3 %in% c('1+2', '4')), aes(x = log2FoldChange, y = -log10(padj), color = quartile3)) +
+  geom_point(size = 2, alpha = 0.6, shape = 16) +
+  theme_minimal() +
+  labs(title = "EPKMe3 CDS",
+       x = "log2 Fold Change",
+       y = "-log10 padj-value",
+       color = "Quartiles") +
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "gray") +  # Add p-value 0.05 line
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray") +  # Add log2 Fold Change = 0 line
+  scale_color_manual(values = c('1+2' = 'red', '4' = 'blue')) +
+  theme_classic() +
+  theme(aspect.ratio = 1,
+        legend.position = c(0.4, 0.9))    # Set the justification of the legend (0=left, 1=top)
+
+library(gridExtra)
+
+# Assuming you have already generated volcano_4bin_plot, volcano_3bin_plot, and volcano_2bin_plot
+
+# Combine the plots using grid.arrange
+volcano_combined_plots <- grid.arrange(volcano_4bin_plot, volcano_3bin_plot, volcano_bin_plot, volcano_2bin_plot, ncol = 2)
+
+# Display the combined plots
+print(volcano_combined_plots)
+
+
+
+ggsave("output/Step05.EPKMe3_CDS_differential_volcano_quartiles.pdf", plot = volcano_combined_plots, device = "pdf", width = 10, height = 10)
+
+```
+
+### MA plot highlighting the genes in quartile 1+2 vs. quartile 4
+
+
+generate a volcano plot of the EPKM 10^3 and a MA plot highlighting the genes in quartile 1+2 vs. quartile 4
+
+In this example, M and A represent the vectors of log-fold change and average expression values, respectively. The subset() function is used to highlight genes in quartile 1+2 vs. quartile 4 by setting a different color (blue in this case) for genes with A values below or equal to the median A value.
+
+```{r}
+
+df <- EPKMe3_CDS_Differential_quartiles
+
+
+
+# Step 1: Load the required libraries
+library(dplyr)
+library(ggplot2)
+
+# Step 2: Calculate the log-fold change (M) between quartiles_bin 1+2 and quartiles_bin 4
+# Assuming your data frame is named 'df'
+
+# Calculate log2-fold change (M) for each gene between quartiles_bin 1+2 and quartiles_bin 4
+df$log2FoldChange <- rowMeans(log2(df[, c('SCR_Rep1', 'SCR_Rep2', 'SCR_Rep3')])) -
+                     rowMeans(log2(df[, c('shRNA33_Rep1', 'shRNA33_Rep2', 'shRNA33_Rep3')]))
+
+# Step 3: Calculate the average expression (A) for each gene within quartiles_bin 1+2 and quartiles_bin 4
+# Assuming columns 'SCR_Rep1', 'SCR_Rep2', 'SCR_Rep3', etc. represent the expression values for each group
+
+df$Average_Expression_1_2 <- rowMeans(df[, c('SCR_Rep1', 'SCR_Rep2', 'SCR_Rep3')])
+
+df$Average_Expression_4 <- rowMeans(df[, c('shRNA33_Rep1', 'shRNA33_Rep2', 'shRNA33_Rep3')])
+
+# Step 4: Create a new data frame with the calculated M and A values
+# For this analysis, we are only interested in quartiles_bin 1+2 and quartiles_bin 4
+ma_data <- df %>% 
+  filter(quartiles_bin %in% c(1, 2, 4)) %>% 
+  select(Geneid, Genename, log2FoldChange, Average_Expression_1_2, Average_Expression_4, quartiles_bin)
+
+# Generate the MA plot highlighting genes in quartiles_bin 1+2 vs. quartiles_bin 4
+ma_plot <- ggplot(ma_data, aes(x = Average_Expression_1_2, y = log2FoldChange, color = factor(quartiles_bin))) +
+  geom_point(size = 2, alpha = 0.6) +
+  theme_minimal() +
+  labs(title = "MA Plot - Genes in Quartiles_bin 1+2 vs. Quartiles_bin 4",
+       x = "Average Expression in Quartiles_bin 1+2",
+       y = "Log2 Fold Change between Quartiles_bin 1+2 and Quartiles_bin 4",
+       color = "Quartiles_bin") +
+  scale_color_manual(values = c("1" = "blue", "2" = "blue", "4" = "red")) +
+  theme_classic()
+
+# Display the MA plot
+print(ma_plot)
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+## 2.2 EPKM-CDS+3’utr-*10e3
+
+```{r}
+library(dplyr)
+
+# Define function to calculate EPKM for a given sample data frame
+calculate_epkm <- function(sample_df, sample_name) {
+  # Rename columns and join with gene count data frame
+  sample_sites_counts <- sample_df %>%
+    left_join(gene_count, by = "Geneid") %>%
+    rename(gene_expression_counts = !!sym(sample_name),
+          coverage := paste0(sample_name, "_coverage"),
+          editRatio := paste0(sample_name, "_editRatio"),
+          score := paste0(sample_name, "_score")) %>% 
+    dplyr::select(chr, start, Geneid, Genename, biotype, Length, strand, coverage, editRatio, score, gene_expression_counts) %>%
+    distinct() %>%
+    filter(biotype %in% c("CDS", "three_prime_utr")) %>%
+    filter(gene_expression_counts > 0) 
+  
+  # Calculate edited reads count and sum them for each gene
+  sample_edited_reads <- sample_sites_counts %>%
+    mutate(across(c(coverage, editRatio), as.numeric)) %>% # convert to numeric
+    mutate(edited_reads = coverage * editRatio) %>%
+    group_by(Geneid, Length, gene_expression_counts) %>%
+    summarise(sum_edited_reads = sum(edited_reads), .groups = "drop")
+  
+  # Calculate EPKM
+  
+  sample_epkm <- sample_edited_reads %>%
+    mutate(
+      per_million_mapped_read_counts = sum(sample_sites_counts$gene_expression_counts) / 1e6,
+      gene_length_kb = Length / 1e3,
+      EPKM = 1e3 * (sum_edited_reads / per_million_mapped_read_counts) / gene_length_kb
+    ) %>%
+    dplyr::select(Geneid, EPKM) %>%
+    rename(!!paste0(sample_name, "_EPKM") := EPKM)
+  
+  return(sample_epkm)
+}
+
+
+
+# Calculate EPKM for each sample
+SCR_Rep1_epkm <- calculate_epkm(SCR_Rep1, "SCR_Rep1") 
+SCR_Rep2_epkm <- calculate_epkm(SCR_Rep2, "SCR_Rep2")
+SCR_Rep3_epkm <- calculate_epkm(SCR_Rep3, "SCR_Rep3")
+
+SCR_epkm <- SCR_Rep1_epkm %>%
+  full_join(SCR_Rep2_epkm, by = "Geneid") %>%
+  full_join(SCR_Rep3_epkm, by = "Geneid") %>%
+  replace_na(list(SCR_Rep1_EPKM = 0, SCR_Rep2_EPKM = 0, SCR_Rep3_EPKM = 0)) %>%
+  filter((SCR_Rep1_EPKM > 0 & SCR_Rep2_EPKM > 0) |
+           (SCR_Rep1_EPKM > 0 & SCR_Rep3_EPKM > 0) |
+           (SCR_Rep2_EPKM > 0 & SCR_Rep3_EPKM > 0))
+
+
+
+shRNA33_Rep1_epkm <- calculate_epkm(shRNA33_Rep1, "shRNA33_Rep1")
+shRNA33_Rep2_epkm <- calculate_epkm(shRNA33_Rep2, "shRNA33_Rep2")
+shRNA33_Rep3_epkm <- calculate_epkm(shRNA33_Rep3, "shRNA33_Rep3")
+
+shRNA33_epkm <- shRNA33_Rep1_epkm %>%
+  full_join(shRNA33_Rep2_epkm, by = "Geneid") %>%
+  full_join(shRNA33_Rep3_epkm, by = "Geneid") %>%
+  replace_na(list(shRNA33_Rep1_EPKM = 0, shRNA33_Rep2_EPKM = 0, shRNA33_Rep3_EPKM = 0)) %>%
+  filter((shRNA33_Rep1_EPKM > 0 & shRNA33_Rep2_EPKM > 0) |
+           (shRNA33_Rep1_EPKM > 0 & shRNA33_Rep3_EPKM > 0) |
+           (shRNA33_Rep2_EPKM > 0 & shRNA33_Rep3_EPKM > 0))
+
+
+shRNA37_Rep1_epkm <- calculate_epkm(shRNA37_Rep1, "shRNA37_Rep1")
+shRNA37_Rep2_epkm <- calculate_epkm(shRNA37_Rep2, "shRNA37_Rep2")
+shRNA37_Rep3_epkm <- calculate_epkm(shRNA37_Rep3, "shRNA37_Rep3")
+
+shRNA37_epkm <- shRNA37_Rep1_epkm %>%
+  full_join(shRNA37_Rep2_epkm, by = "Geneid") %>%
+  full_join(shRNA37_Rep3_epkm, by = "Geneid") %>%
+  replace_na(list(shRNA37_Rep1_EPKM = 0, shRNA37_Rep2_EPKM = 0, shRNA37_Rep3_EPKM = 0)) %>%
+  filter((shRNA37_Rep1_EPKM > 0 & shRNA37_Rep2_EPKM > 0) |
+           (shRNA37_Rep1_EPKM > 0 & shRNA37_Rep3_EPKM > 0) |
+           (shRNA37_Rep2_EPKM > 0 & shRNA37_Rep3_EPKM > 0))
+
+
+# Join Geneid_epkm data frames by Geneid
+gene_epkm <- SCR_epkm %>%
+  full_join(shRNA33_epkm, by = "Geneid") %>%
+  full_join(shRNA37_epkm, by = "Geneid") 
+
+
+
+
+```
+
+
+### Quartile_BoxPlot 
+
+for the quartile analysis with epkm --> we should use just epkm for scramble --> since the KD affects editing frequency + editing sites.
+quartile bins is defined based on the average value of 3 SCR samples from high to low.
+```{r}
+gene_epkm <- gene_epkm %>%  
+  rename_all(~ gsub("_EPKM", "", .)) %>%
+  mutate_all(~ ifelse(is.na(.), 0, .)) 
+
+```
+
+#### SCR, shRNA33, shRNA37 cut by SCR EPKM value
+
+
+```{r}
+library(tidyverse)
+library(rstatix)
+library(ggpubr)
+
+
+gene_epkm_bin <- gene_epkm %>%
+  arrange(desc((SCR_Rep1 + SCR_Rep2 + SCR_Rep3)/3))%>% 
+  left_join(Geneid_Genename, by = "Geneid") %>%
+  relocate(Genename, .after = Geneid)
+
+# Calculate the number of rows in each bin 
+rows_per_bin <- nrow(gene_epkm_bin) / 4
+# Print the number of genes in each quartile
+print(paste("Each quartile genes number:", rows_per_bin))
+
+# Add a new "bin" column based on the row index
+gene_epkm_bin <- gene_epkm_bin %>%
+  mutate(bin = as.integer((row_number() - 1) / rows_per_bin) + 1)
+
+# Reshape the data to long format
+long_data <- gene_epkm_bin %>%
+  gather(key = "sample_Rep", value = "EPKM", SCR_Rep1, SCR_Rep2, SCR_Rep3, shRNA33_Rep1, shRNA33_Rep2, shRNA33_Rep3, shRNA37_Rep1, shRNA37_Rep2, shRNA37_Rep3) %>%
+  mutate(sample_group = case_when(
+    grepl("SCR", sample_Rep) ~ "SCR",
+    grepl("shRNA33", sample_Rep) ~ "shRNA33",
+    grepl("shRNA37", sample_Rep) ~ "shRNA37"
+  ))
+
+# Perform pairwise Wilcoxon rank-sum tests
+pairwise_comparisons <- long_data %>%
+  group_by(bin) %>%
+  pairwise_wilcox_test(EPKM ~ sample_group, p.adjust.method = "bonferroni")
+
+# Filter the significant comparisons (e.g., p-value < 0.05)
+EPKM_3_significant_comparisons <- pairwise_comparisons %>%
+  filter(p.adj < 0.05)
+
+print(EPKM_3_significant_comparisons)
+
+# Calculate the average EPKM value for each sample group in each bin
+average_EPKM <- long_data %>%
+  group_by(bin, sample_group) %>%
+  summarize(mean_EPKM = mean(EPKM),
+            median_EPKM = median(EPKM),
+            .groups = "drop")
+
+
+
+
+
+# Print the average EPKM values
+print(average_EPKM)
+
+
+# save as excel
+library(openxlsx)
+
+# Create a new workbook
+wb <- createWorkbook()
+
+# Add the data frames as sheets to the workbook
+## sheet1
+addWorksheet(wb, "gene_epkm")
+writeData(wb, "gene_epkm", gene_epkm)
+
+## sheet2
+addWorksheet(wb, "EPKM_bins")
+writeData(wb, "EPKM_bins", long_data)
+
+## sheet3
+addWorksheet(wb, "3groups_significant")
+writeData(wb, "3groups_significant", EPKM_3_significant_comparisons)
+
+## sheet4
+addWorksheet(wb, "average_EPKM")
+writeData(wb, "average_EPKM", average_EPKM)
+
+# Save the workbook to a file
+saveWorkbook(wb, "output/Step05.EPKMe3_CDS_3UTR_Quartile_binByEPKM_3groups.xlsx", overwrite = TRUE)
+
+
+
+
+# Generate the box plot
+colors <- c("#C1C0C0", "#76D7FF", "#1796FF")
+
+
+EPKM_Quartile_binByEPKM_3groups <- ggplot(long_data, aes(x = as.factor(bin), y = log2(EPKM + 1), fill = sample_group)) +
+  geom_boxplot(color = "grey50", outlier.size = 0.5) +
+  labs(x = "Quartile", y = "log2(EPKM * 1e3 + 1)", title = "EPKM (CDS+3'UTR) rank by control EPKM value") +
+  scale_fill_manual(values = colors, 
+                    labels = c("control", "KD-33", "KD-37"),
+                    name = "") +
+  theme_classic() +
+  theme(legend.position = c(0.82, 0.95),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.background = element_rect(fill = "transparent", color = NA),
+        legend.text = element_text(size = 9),
+        legend.title = element_text(size = 9),
+        legend.key.size = unit(0.3, "cm"),
+        aspect.ratio = 2/1)
+
+
+
+ggsave("output/Step05.EPKMe3_CDS_3UTR_Quartile_binByEPKM_3groups.pdf", plot = EPKM_Quartile_binByEPKM_3groups, device = "pdf", width = 8, height = 6)
+
+
+
+
+```
+
+
+#### SCR, shRNA cut by SCR EPKM value
+
+
+```{r}
+# Reshape the data to long format
+long_data <- gene_epkm_bin %>%
+  gather(key = "sample_Rep", value = "EPKM", SCR_Rep1, SCR_Rep2, SCR_Rep3, shRNA33_Rep1, shRNA33_Rep2, shRNA33_Rep3, shRNA37_Rep1, shRNA37_Rep2, shRNA37_Rep3) %>%
+  mutate(sample_group = case_when(
+    grepl("SCR", sample_Rep) ~ "SCR",
+    grepl("shRNA33", sample_Rep) ~ "shRNA33",
+    grepl("shRNA37", sample_Rep) ~ "shRNA37"
+  )) %>%
+  mutate(combined_group = case_when(
+    sample_group == "SCR" ~ "SCR",
+    sample_group %in% c("shRNA33", "shRNA37") ~ "shRNA"
+  ))
+
+# Perform pairwise Wilcoxon rank-sum tests
+pairwise_comparisons <- long_data %>%
+  group_by(bin) %>%
+  pairwise_wilcox_test(EPKM ~ combined_group, p.adjust.method = "bonferroni", pool.sd = FALSE)
+
+# Filter the significant comparisons (e.g., p-value < 0.05)
+EPKM_2_significant_comparisons <- pairwise_comparisons %>%
+  filter(p.adj < 0.05)
+
+print(EPKM_2_significant_comparisons)
+
+# Calculate the average EPKM value for each sample group in each bin
+average_EPKM <- long_data %>%
+  group_by(bin, combined_group) %>%
+  summarize(mean_EPKM = mean(EPKM),
+            median_EPKM = median(EPKM),
+            .groups = "drop")
+
+
+# Print the average EPKM values
+print(average_EPKM)
+
+
+# save as excel
+library(openxlsx)
+
+# Create a new workbook
+wb <- createWorkbook()
+
+# Add the data frames as sheets to the workbook
+## sheet1
+addWorksheet(wb, "gene_epkm")
+writeData(wb, "gene_epkm", gene_epkm)
+
+## sheet2
+addWorksheet(wb, "EPKM_bins")
+writeData(wb, "EPKM_bins", long_data)
+
+## sheet3
+addWorksheet(wb, "2groups_significant")
+writeData(wb, "2groups_significant", EPKM_2_significant_comparisons)
+
+## sheet4
+addWorksheet(wb, "average_EPKM")
+writeData(wb, "average_EPKM", average_EPKM)
+
+# Save the workbook to a file
+saveWorkbook(wb, "output/Step05.EPKMe3_CDS_3UTR_Quartile_binByEPKM_2groups.xlsx", overwrite = TRUE)
+
+
+
+# Generate the box plot
+colors <- c("#C1C0C0", "#1796FF")
+
+
+EPKM_Quartile_binByEPKM_2groups <- ggplot(long_data, aes(x = as.factor(bin), y = log2(EPKM + 1), fill = combined_group)) +
+  geom_boxplot(color = "grey50", outlier.size = 0.5) +
+  labs(x = "Quartile", y = "log2(EPKM * 1e3 + 1)", title = "EPKM (CDS+3'UTR) rank by control EPKM value") +
+  scale_fill_manual(values = colors, labels = c("control", "KD"), name = "") +
+  theme_classic() +
+  theme(legend.position = c(0.82, 0.95),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.background = element_rect(fill = "transparent", color = NA),
+        legend.text = element_text(size = 9),
+        legend.title = element_text(size = 9),
+        legend.key.size = unit(0.3, "cm"),
+        aspect.ratio = 2/1)
+
+ggsave("output/Step05.EPKMe3_CDS_3UTR_Quartile_binByEPKM_2groups.pdf", plot = EPKM_Quartile_binByEPKM_2groups, device = "pdf", width = 8, height = 6)
+
+
+
+
+save(gene_epkm_bin, file = "output/Step05.EPKMe3_CDS_3UTR_SCR_shRNA_EPKMbin.rdata")
+
+
+```
+
+
+
+
+
+
+
+### Differential results
+
+Using normalized gene expression values rather than raw counts. 
+DESeq2 requires raw count data as input for its statistical model to perform differential expression analysis. 
+Here, we can use other methods for differential expression analysis that can handle normalized gene expression data, such as limma-voom or edgeR.
+
+```{r}
+gene_epkm <- gene_epkm %>%  
+  column_to_rownames(var = "Geneid")
+
+
+# Load necessary libraries
+library(limma)
+
+library(ggplot2)
+
+# Subset the gene_epkm data frame to include only rows where the row sum is greater than 0
+gene_epkm <- gene_epkm[which(rowSums(gene_epkm) > 0),]
+
+# Display the dimensions of the resulting data frame
+dim(gene_epkm)
+
+# Create a factor variable condition with three levels
+condition <- factor(paste(rep(c("SCR", "shRNA33", "shRNA37"), each = 3)))
+
+coldata <- data.frame(row.names = colnames(gene_epkm), condition)
+
+# Create a DGEList object from the normalized gene expression data
+dge <- DGEList(counts = gene_epkm)
+
+
+
+
+# Convert the normalized data to log2-counts per million (logCPM) using limma's voom function
+v <- voom(dge, normalize.method = "none")
+
+# Set up the design matrix for your experimental conditions
+design <- model.matrix(~0 + condition)
+colnames(design) <- levels(condition)
+
+# Fit the linear model and perform differential expression analysis
+fit <- lmFit(v, design)
+contrast.matrix <- makeContrasts(shRNA33_vs_SCR = shRNA33 - SCR, shRNA37_vs_SCR = shRNA37 - SCR, shRNA37_vs_shRNA33 = shRNA37 - shRNA33, levels = design)
+fit2 <- contrasts.fit(fit, contrast.matrix)
+fit2 <- eBayes(fit2)
+
+# Extract the top differentially expressed genes for each contrast
+res_shRNA33_SCR <- topTable(fit2, number = Inf, coef = "shRNA33_vs_SCR")
+res_shRNA37_SCR <- topTable(fit2, number = Inf, coef = "shRNA37_vs_SCR")
+res_shRNA37_shRNA33 <- topTable(fit2, number = Inf, coef = "shRNA37_vs_shRNA33")
+
+# Perform PCA on the logCPM values
+pca <- prcomp(t(v$E), scale = TRUE)
+
+# Create a data frame with the first two principal components and the sample conditions
+pca_df <- data.frame(Sample = rownames(pca$x),
+                     PC1 = pca$x[, 1],
+                     PC2 = pca$x[, 2],
+                     Condition = coldata$condition)
+
+# Plot the PCA with ggplot2
+ggplot(pca_df, aes(x = PC1, y = PC2, color = Condition)) +
+  geom_point(size = 3) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+  labs(title = "PCA plot", x = "PC1", y = "PC2") +
+  scale_color_discrete(name = "Condition")
+
+
+
+
+
+
+
+
+# Extract the replicate information from the sample names
+pca_df$Replicate <- gsub(".*(Rep\\d+).*", "\\1", pca_df$Sample)
+
+# Plot the PCA with ggplot2 and add sample labels
+ggplot(pca_df, aes(x = PC1, y = PC2, color = Condition)) +
+  geom_point(size = 3) +
+  geom_text(aes(label = Replicate), hjust = 0.3, vjust = 1.3, size = 3) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+  labs(title = "PCA plot", x = "PC1", y = "PC2") +
+  scale_color_discrete(name = "Condition")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# create a factor variable condition with three levels
+condition2 <- factor(c("SCR", "SCR", "SCR", "shRNA", "shRNA", "shRNA", "shRNA", "shRNA", "shRNA"))
+
+
+coldata <- data.frame(row.names = colnames(gene_epkm), condition2)
+
+# Create a DGEList object from the normalized gene expression data
+dge <- DGEList(counts = gene_epkm)
+
+
+
+
+# Convert the normalized data to log2-counts per million (logCPM) using limma's voom function
+v <- voom(dge, normalize.method = "none")
+
+# Set up the design matrix for your experimental condition2s
+design <- model.matrix(~0 + condition2)
+colnames(design) <- levels(condition2)
+
+# Fit the linear model and perform differential expression analysis
+fit <- lmFit(v, design)
+contrast.matrix <- makeContrasts(shRNA_vs_SCR = shRNA - SCR, levels = design)
+fit2 <- contrasts.fit(fit, contrast.matrix)
+fit2 <- eBayes(fit2)
+
+# Extract the top differentially expressed genes for each contrast
+res_shRNA_SCR <- topTable(fit2, number = Inf, coef = "shRNA_vs_SCR")
+
+
+# Perform PCA on the logCPM values
+pca <- prcomp(t(v$E), scale = TRUE)
+
+# Create a data frame with the first two principal components and the sample condition2s
+pca_df <- data.frame(Sample = rownames(pca$x),
+                     PC1 = pca$x[, 1],
+                     PC2 = pca$x[, 2],
+                     condition2 = coldata$condition2)
+
+# Plot the PCA with ggplot2
+ggplot(pca_df, aes(x = PC1, y = PC2, color = condition2)) +
+  geom_point(size = 3) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+  labs(title = "PCA plot", x = "PC1", y = "PC2") +
+  scale_color_discrete(name = "condition2")
+
+
+
+
+
+
+
+
+
+##when we give the different direction, just base on padj, not FoldChange.
+
+
+library(tidyverse)
+# res_shRNA33_SCR
+res_shRNA33_SCR <- as.data.frame(res_shRNA33_SCR)
+res_shRNA33_SCR <- res_shRNA33_SCR %>% 
+  rownames_to_column(var = "Geneid") %>%
+  left_join(Geneid_Genename, by="Geneid") %>%
+  dplyr::select(Geneid, Genename, log2FoldChange = logFC, pvalue = P.Value, padj = adj.P.Val) %>% 
+  mutate(direction = if_else(
+    padj > 0.05, 'ns', if_else(
+      abs(log2FoldChange) == 0, 'ns', if_else(
+        log2FoldChange > 0, 'up', 'down')
+    ))) %>% 
+  arrange(desc(abs(log2FoldChange))) 
+
+## group count
+group_by(res_shRNA33_SCR, direction) %>%
+  summarise(count=n())
+
+
+# res_shRNA37_SCR
+res_shRNA37_SCR <- as.data.frame(res_shRNA37_SCR)
+res_shRNA37_SCR <- res_shRNA37_SCR %>% 
+  rownames_to_column(var = "Geneid") %>%
+  left_join(Geneid_Genename, by="Geneid") %>%
+  dplyr::select(Geneid, Genename, log2FoldChange = logFC, pvalue = P.Value, padj = adj.P.Val) %>% 
+  mutate(direction = if_else(
+    padj > 0.05, 'ns', if_else(
+      abs(log2FoldChange) == 0, 'ns', if_else(
+        log2FoldChange > 0, 'up', 'down')
+    ))) %>%  
+  arrange(desc(abs(log2FoldChange)))   
+
+## group count
+group_by(res_shRNA37_SCR, direction) %>%
+  summarise(count=n())
+
+
+# res_shRNA37_shRNA33
+res_shRNA37_shRNA33 <- as.data.frame(res_shRNA37_shRNA33)
+res_shRNA37_shRNA33 <- res_shRNA37_shRNA33 %>% 
+  rownames_to_column(var = "Geneid") %>%
+  left_join(Geneid_Genename, by="Geneid") %>%
+  dplyr::select(Geneid, Genename, log2FoldChange = logFC, pvalue = P.Value, padj = adj.P.Val) %>% 
+ mutate(direction = if_else(
+    padj > 0.05, 'ns', if_else(
+      abs(log2FoldChange) == 0, 'ns', if_else(
+        log2FoldChange > 0, 'up', 'down')
+    ))) %>%  
+  arrange(desc(abs(log2FoldChange))) 
+
+## group count
+group_by(res_shRNA37_shRNA33, direction) %>%
+  summarise(count=n())
+
+
+# res_shRNA_SCR
+res_shRNA_SCR <- as.data.frame(res_shRNA_SCR)
+res_shRNA_SCR <- res_shRNA_SCR %>% 
+  rownames_to_column(var = "Geneid") %>%
+  left_join(Geneid_Genename, by="Geneid") %>%
+  dplyr::select(Geneid, Genename, log2FoldChange = logFC, pvalue = P.Value, padj = adj.P.Val) %>% 
+ mutate(direction = if_else(
+    padj > 0.05, 'ns', if_else(
+      abs(log2FoldChange) == 0, 'ns', if_else(
+        log2FoldChange > 0, 'up', 'down')
+    ))) %>%  
+  arrange(desc(abs(log2FoldChange))) 
+
+## group count
+group_by(res_shRNA_SCR, direction) %>%
+  summarise(count=n())
+ 
+
+               
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# save as excel
+library(openxlsx)
+
+# Create a new workbook
+wb <- createWorkbook()
+
+# Add the data frames as sheets to the workbook
+## res_shRNA33_SCR
+addWorksheet(wb, "res_shRNA33_SCR")
+writeData(wb, "res_shRNA33_SCR", res_shRNA33_SCR)
+
+## res_shRNA37_SCR
+addWorksheet(wb, "res_shRNA37_SCR")
+writeData(wb, "res_shRNA37_SCR", res_shRNA37_SCR)
+
+## res_shRNA37_shRNA33
+addWorksheet(wb, "res_shRNA37_shRNA33")
+writeData(wb, "res_shRNA37_shRNA33", res_shRNA37_shRNA33)
+
+## res_shRNA_SCR
+addWorksheet(wb, "res_shRNA_SCR")
+writeData(wb, "res_shRNA_SCR", res_shRNA_SCR)
+
+# Save the workbook to a file
+saveWorkbook(wb, "output/Step05.EPKMe3_CDS_3UTR_DifferentialAnalysis.xlsx", overwrite = TRUE)
+
+
+
+
+
+
+
+
+res_shRNA33_SCR_EPKM <- res_shRNA33_SCR  
+
+res_shRNA37_SCR_EPKM <- res_shRNA33_SCR 
+
+res_shRNA37_shRNA33_EPKM <- res_shRNA33_SCR 
+
+res_shRNA_SCR_EPKM <- res_shRNA33_SCR 
+
+
+save(res_shRNA33_SCR_EPKM,res_shRNA33_SCR_EPKM,res_shRNA37_SCR_EPKM,res_shRNA37_shRNA33_EPKM,res_shRNA_SCR_EPKM, file = "output/Step05.EPKMe3_CDS_3UTR_differential.rdata")
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

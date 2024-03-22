@@ -1,0 +1,1189 @@
+---
+title: "Step04.EPKM_RPKM_RBD_nsites_scatterPlot"
+author: "Vu lab"
+date: "2023-06-11"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# How to calculate EPKM
+After C2U QC, we want to see the three replications of each condition (SCR, shRNA33, shRNA37)
+Here we use EPKM scatter plot as indicator to show the replications.
+
+for the EPKM differential level analysis --> it is possible that because the EPKM values are too small --> the statistical test does not work
+one thing we can try is to multiply the values with 10^6 or 10^3 to get it to the similar values we usually have for RPKM --> then run the analysis
+
+EPKM- CDS+3’utr
+
+
+how to calculate EPKM (edited reads per kilobase of transcripts per million mapped reads) 
+https://www.nature.com/articles/s41592-021-01128-0#Sec2
+ 
+To calculate EPKM values for each gene, we used cumulative edit counts (T coverage over each edit site called) as determined by SAILOR (v1.1.0). We summed region-specific (either CDS or CDS and 3′ UTR, as defined by hg19 v19 Gencode annotations) edit counts for each gene and divided this number by the ‘per million’ mapped read counts to either CDS or CDS and 3′ UTR, respectively, for all genes with read counts greater than 0 as defined by Subread featureCounts (v1.5.3). We then normalized this number to the length of either the CDS or the CDS and 3′ UTR of each gene in kilobases. To assess the relationship between RPS2–STAMP and mRNA translation, we compared these per-gene EPKM values to normalized read units (RPKM values) for ribosome-protected transcripts assessed in Ribo-seq (GSE94460) and polysome-seq (GSE109423). For these analyses, we included all genes with detected read counts in either our RPS2–STAMP or ribosome-occupancy datasets.
+
+According to this describe, we calculate EPKM as following:
+1. Calculate the edited reads count for each gene by multiplying edit_site_coverage with editRatio (CDS and 3′ UTR). 
+edited_reads = coverage * editRatio
+
+2. Sum the edited reads counts for each gene. 
+sum_edited_reads = sum(edited_reads)
+
+3. divided this number by the ‘per million’ mapped read counts to either CDS or CDS and 3′ UTR, respectively, for all genes with read counts greater than 0 (my understanding: total gene expression count of each sample / 1e6).  Then normalize the result to the length of the transcript in kilobases (gene_length / 1e3).
+
+per_million_mapped_read_counts = sum(sample_sites_counts$gene_expression_counts) / 1e6
+EPKM = (sum_edited_reads / per_million_mapped_read_counts) / (Length / 1e3) 
+
+## Import data
+
+```{r}
+library(tidyverse)
+load(file = "output/Step03.C2U_QC.rdata")
+load(file = "output/Step02.TranscriptID_Geneid_Genename.rdata")
+
+# gene expression count
+gene_count <- read.delim("Count/count.out",
+                         comment.char = "#",
+                         row.names = 1) %>% # set row names to the values in the first column
+  select(-c(1:5)) %>%  # Use dplyr::select() to remove columns from the data frame
+  rename_all(~ gsub(".bam", "", .))  # Use dplyr::rename_all() and gsub() to remove ".bam" from all column names
+
+
+# Subset the gene_count data frame to include only rows where the row sum is greater than 0
+gene_count <- gene_count[which(rowSums(gene_count) > 0),]
+
+gene_length <- read.delim("Count/count.out",
+                         comment.char = "#")%>% 
+  select(Geneid, Length) 
+
+
+gene_count <- as.data.frame(gene_count)
+gene_count <- gene_count %>% 
+  rownames_to_column(var = "Geneid") %>%
+  left_join(gene_length, by="Geneid")
+
+```
+
+
+# EPKM scatter plot (EPKM-CDS+3’utr, without modification)
+
+per_million_mapped_read_counts = sum(sample_sites_counts$gene_expression_counts) / 1e6
+EPKM = (sum_edited_reads / per_million_mapped_read_counts) / (Length / 1e3)
+
+
+```{r}
+library(dplyr)
+
+# Define function to calculate EPKM for a given sample data frame
+calculate_epkm <- function(sample_df, sample_name) {
+  # Rename columns and join with gene count data frame
+  sample_sites_counts <- sample_df %>%
+    left_join(gene_count, by = "Geneid") %>%
+    rename(gene_expression_counts = !!sym(sample_name),
+          coverage := paste0(sample_name, "_coverage"),
+          editRatio := paste0(sample_name, "_editRatio"),
+          score := paste0(sample_name, "_score")) %>% 
+    dplyr::select(chr, start, Geneid, Genename, biotype, Length, strand, coverage, editRatio, score, gene_expression_counts) %>%
+    distinct() %>%
+    filter(biotype %in% c("CDS", "three_prime_utr")) %>%
+    filter(gene_expression_counts > 0) 
+  
+  # Calculate edited reads count and sum them for each gene
+  sample_edited_reads <- sample_sites_counts %>%
+    mutate(across(c(coverage, editRatio), as.numeric)) %>% # convert to numeric
+    mutate(edited_reads = coverage * editRatio) %>%
+    group_by(Geneid, Length, gene_expression_counts) %>%
+    summarise(sum_edited_reads = sum(edited_reads), .groups = "drop")
+  
+  # Calculate EPKM
+  
+  sample_epkm <- sample_edited_reads %>%
+    mutate(
+      per_million_mapped_read_counts = sum(sample_sites_counts$gene_expression_counts) / 1e6,
+      gene_length_kb = Length / 1e3,
+      EPKM = (sum_edited_reads / per_million_mapped_read_counts) / gene_length_kb
+    ) %>%
+    dplyr::select(Geneid, EPKM) %>%
+    rename(!!paste0(sample_name, "_EPKM") := EPKM)
+  
+  return(sample_epkm)
+}
+
+
+
+# Calculate EPKM for each sample
+SCR_Rep1_epkm <- calculate_epkm(SCR_Rep1, "SCR_Rep1") 
+SCR_Rep2_epkm <- calculate_epkm(SCR_Rep2, "SCR_Rep2")
+SCR_Rep3_epkm <- calculate_epkm(SCR_Rep3, "SCR_Rep3")
+
+SCR_epkm <- SCR_Rep1_epkm %>%
+  full_join(SCR_Rep2_epkm, by = "Geneid") %>%
+  full_join(SCR_Rep3_epkm, by = "Geneid") %>%
+  replace_na(list(SCR_Rep1_EPKM = 0, SCR_Rep2_EPKM = 0, SCR_Rep3_EPKM = 0)) %>%
+  filter((SCR_Rep1_EPKM > 0 & SCR_Rep2_EPKM > 0) |
+           (SCR_Rep1_EPKM > 0 & SCR_Rep3_EPKM > 0) |
+           (SCR_Rep2_EPKM > 0 & SCR_Rep3_EPKM > 0))
+
+
+
+shRNA33_Rep1_epkm <- calculate_epkm(shRNA33_Rep1, "shRNA33_Rep1")
+shRNA33_Rep2_epkm <- calculate_epkm(shRNA33_Rep2, "shRNA33_Rep2")
+shRNA33_Rep3_epkm <- calculate_epkm(shRNA33_Rep3, "shRNA33_Rep3")
+
+shRNA33_epkm <- shRNA33_Rep1_epkm %>%
+  full_join(shRNA33_Rep2_epkm, by = "Geneid") %>%
+  full_join(shRNA33_Rep3_epkm, by = "Geneid") %>%
+  replace_na(list(shRNA33_Rep1_EPKM = 0, shRNA33_Rep2_EPKM = 0, shRNA33_Rep3_EPKM = 0)) %>%
+  filter((shRNA33_Rep1_EPKM > 0 & shRNA33_Rep2_EPKM > 0) |
+           (shRNA33_Rep1_EPKM > 0 & shRNA33_Rep3_EPKM > 0) |
+           (shRNA33_Rep2_EPKM > 0 & shRNA33_Rep3_EPKM > 0))
+
+
+shRNA37_Rep1_epkm <- calculate_epkm(shRNA37_Rep1, "shRNA37_Rep1")
+shRNA37_Rep2_epkm <- calculate_epkm(shRNA37_Rep2, "shRNA37_Rep2")
+shRNA37_Rep3_epkm <- calculate_epkm(shRNA37_Rep3, "shRNA37_Rep3")
+
+shRNA37_epkm <- shRNA37_Rep1_epkm %>%
+  full_join(shRNA37_Rep2_epkm, by = "Geneid") %>%
+  full_join(shRNA37_Rep3_epkm, by = "Geneid") %>%
+  replace_na(list(shRNA37_Rep1_EPKM = 0, shRNA37_Rep2_EPKM = 0, shRNA37_Rep3_EPKM = 0)) %>%
+  filter((shRNA37_Rep1_EPKM > 0 & shRNA37_Rep2_EPKM > 0) |
+           (shRNA37_Rep1_EPKM > 0 & shRNA37_Rep3_EPKM > 0) |
+           (shRNA37_Rep2_EPKM > 0 & shRNA37_Rep3_EPKM > 0))
+
+
+# Join Geneid_epkm data frames by Geneid
+gene_epkm <- SCR_epkm %>%
+  full_join(shRNA33_epkm, by = "Geneid") %>%
+  full_join(shRNA37_epkm, by = "Geneid") 
+
+
+
+
+```
+
+
+
+
+## SCR
+
+```{r}
+# Load required libraries
+library(ggplot2)
+library(dplyr)
+library(ggpmisc)
+
+
+
+p1 <- ggplot(SCR_epkm, aes(x = log2(SCR_Rep1_EPKM + 1), y = log2(SCR_Rep2_EPKM + 1))) +
+  geom_point(size = 2, alpha = 0.5, color = "#2277B5") +
+  stat_poly_eq(aes(label = paste(stat(adj.rr.label), stat(p.value.label), sep = "*\", \"*")),
+               formula = y ~ x,
+               rr.digits = 3, p.digits = 3,
+               parse = TRUE,
+               label.x = "left", label.y = "top") +
+  labs(title = "control", x = "log2(EPKM + 1) rep1", y = "log2(EPKM + 1) rep2") +
+  theme_classic() +
+  theme(aspect.ratio = 1)
+
+
+# SCR_Rep1_Rep3
+
+p2 <- ggplot(SCR_epkm, aes(x = log2(SCR_Rep1_EPKM + 1), y = log2(SCR_Rep3_EPKM + 1))) +
+  geom_point(size = 2, alpha = 0.5, color = "#2277B5") +
+  stat_poly_eq(aes(label = paste(stat(adj.rr.label), stat(p.value.label), sep = "*\", \"*")),
+               formula = y ~ x,
+               rr.digits = 3, p.digits = 3,
+               parse = TRUE,
+               label.x = "left", label.y = "top") +
+  labs(title = "control", x = "log2(EPKM + 1) rep1", y = "log2(EPKM + 1) rep3") +
+  theme_classic() +
+  theme(aspect.ratio = 1)
+
+
+# SCR_Rep2_Rep3
+
+p3 <- ggplot(SCR_epkm, aes(x = log2(SCR_Rep2_EPKM + 1), y = log2(SCR_Rep3_EPKM + 1))) +
+  geom_point(size = 2, alpha = 0.5, color = "#2277B5") +
+  stat_poly_eq(aes(label = paste(stat(adj.rr.label), stat(p.value.label), sep = "*\", \"*")),
+               formula = y ~ x,
+               rr.digits = 3, p.digits = 3,
+               parse = TRUE,
+               label.x = "left", label.y = "top") +
+  labs(title = "control", x = "log2(EPKM + 1) rep2", y = "log2(EPKM + 1) rep3") +
+  theme_classic() +
+  theme(aspect.ratio = 1)
+
+
+library(gridExtra)
+
+# combine the plots
+control_epkm_scattar <- grid.arrange(p1, p2, p3, nrow = 1)
+
+
+ggsave("output/Ste04.control_epkm_scattar.pdf", plot = control_epkm_scattar, device = "pdf", width = 8, height = 6)
+
+```
+
+
+
+
+
+
+
+
+## shRNA33
+
+
+```{r}
+# Load required libraries
+library(ggplot2)
+library(dplyr)
+library(ggpmisc)
+
+
+
+p1 <- ggplot(shRNA33_epkm, aes(x = log2(shRNA33_Rep1_EPKM + 1), y = log2(shRNA33_Rep2_EPKM + 1))) +
+  geom_point(size = 2, alpha = 0.5, color = "#2277B5") +
+  stat_poly_eq(aes(label = paste(stat(adj.rr.label), stat(p.value.label), sep = "*\", \"*")),
+               formula = y ~ x,
+               rr.digits = 3, p.digits = 3,
+               parse = TRUE,
+               label.x = "left", label.y = "top") +
+  labs(title = "KD-33", x = "log2(EPKM + 1) rep1", y = "log2(EPKM + 1) rep2") +
+  theme_classic() +
+  theme(aspect.ratio = 1)
+
+
+# shRNA33_Rep1_Rep3
+
+p2 <- ggplot(shRNA33_epkm, aes(x = log2(shRNA33_Rep1_EPKM + 1), y = log2(shRNA33_Rep3_EPKM + 1))) +
+  geom_point(size = 2, alpha = 0.5, color = "#2277B5") +
+  stat_poly_eq(aes(label = paste(stat(adj.rr.label), stat(p.value.label), sep = "*\", \"*")),
+               formula = y ~ x,
+               rr.digits = 3, p.digits = 3,
+               parse = TRUE,
+               label.x = "left", label.y = "top") +
+  labs(title = "KD-33", x = "log2(EPKM + 1) rep1", y = "log2(EPKM + 1) rep3") +
+  theme_classic() +
+  theme(aspect.ratio = 1)
+
+
+# shRNA33_Rep2_Rep3
+
+p3 <- ggplot(shRNA33_epkm, aes(x = log2(shRNA33_Rep2_EPKM + 1), y = log2(shRNA33_Rep3_EPKM + 1))) +
+  geom_point(size = 2, alpha = 0.5, color = "#2277B5") +
+  stat_poly_eq(aes(label = paste(stat(adj.rr.label), stat(p.value.label), sep = "*\", \"*")),
+               formula = y ~ x,
+               rr.digits = 3, p.digits = 3,
+               parse = TRUE,
+               label.x = "left", label.y = "top") +
+  labs(title = "KD-33", x = "log2(EPKM + 1) rep2", y = "log2(EPKM + 1) rep3") +
+  theme_classic() +
+  theme(aspect.ratio = 1)
+
+
+library(gridExtra)
+
+# combine the plots
+KD33_epkm_scattar <- grid.arrange(p1, p2, p3, nrow = 1)
+
+ggsave("output/Ste04.KD33_epkm_scattar.pdf", plot = KD33_epkm_scattar, device = "pdf", width = 8, height = 6)
+```
+
+## shRNA37
+
+
+```{r}
+# Load required libraries
+library(ggplot2)
+library(dplyr)
+library(ggpmisc)
+
+p1 <- ggplot(shRNA37_epkm, aes(x = log2(shRNA37_Rep1_EPKM + 1), y = log2(shRNA37_Rep2_EPKM + 1))) +
+  geom_point(size = 2, alpha = 0.5, color = "#2277B5") +
+  stat_poly_eq(aes(label = paste(stat(adj.rr.label), stat(p.value.label), sep = "*\", \"*")),
+               formula = y ~ x,
+               rr.digits = 3, p.digits = 3,
+               parse = TRUE,
+               label.x = "left", label.y = "top") +
+  labs(title = "KD-37", x = "log2(EPKM + 1) rep1", y = "log2(EPKM + 1) rep2") +
+  theme_classic() +
+  theme(aspect.ratio = 1)
+
+
+# shRNA37_Rep1_Rep3
+p2 <- ggplot(shRNA37_epkm, aes(x = log2(shRNA37_Rep1_EPKM + 1), y = log2(shRNA37_Rep3_EPKM + 1))) +
+  geom_point(size = 2, alpha = 0.5, color = "#2277B5") +
+  stat_poly_eq(aes(label = paste(stat(adj.rr.label), stat(p.value.label), sep = "*\", \"*")),
+               formula = y ~ x,
+               rr.digits = 3, p.digits = 3,
+               parse = TRUE,
+               label.x = "left", label.y = "top") +
+  labs(title = "KD-37", x = "log2(EPKM + 1) rep1", y = "log2(EPKM + 1) rep3") +
+  theme_classic() +
+  theme(aspect.ratio = 1)
+
+
+# shRNA37_Rep2_Rep3
+p3 <- ggplot(shRNA37_epkm, aes(x = log2(shRNA37_Rep2_EPKM + 1), y = log2(shRNA37_Rep3_EPKM + 1))) +
+  geom_point(size = 2, alpha = 0.5, color = "#2277B5") +
+  stat_poly_eq(aes(label = paste(stat(adj.rr.label), stat(p.value.label), sep = "*\", \"*")),
+               formula = y ~ x,
+               rr.digits = 3, p.digits = 3,
+               parse = TRUE,
+               label.x = "left", label.y = "top") +
+  labs(title = "KD-37", x = "log2(EPKM + 1) rep2", y = "log2(EPKM + 1) rep3") +
+  theme_classic() +
+  theme(aspect.ratio = 1)
+
+
+library(gridExtra)
+
+# combine the plots
+KD37_epkm_scattar <- grid.arrange(p1, p2, p3, nrow = 1)
+
+ggsave("output/Ste04.KD37_epkm_scattar.pdf", plot = KD37_epkm_scattar, device = "pdf", width = 8, height = 6)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# rpkm 
+per_million_mapped_read_counts = sum(sample_sites_counts$gene_expression_counts) / 1e6
+rpkm = (gene_expression_counts / per_million_mapped_read_counts) / (Length / 1e3)
+
+
+## rpkm
+
+```{r}
+library(dplyr)
+library(tidyverse)
+# Define function to calculate rpkm for a given sample data frame
+calculate_rpkm <- function(sample_df, sample_name) {
+  # Rename columns and join with gene count data frame
+  sample_sites_counts <- sample_df %>%
+    left_join(gene_count, by = "Geneid") %>%
+    rename(gene_expression_counts = !!sym(sample_name),
+          coverage := paste0(sample_name, "_coverage"),
+          editRatio := paste0(sample_name, "_editRatio"),
+          score := paste0(sample_name, "_score")) %>% 
+    dplyr::select(chr, start, Geneid, Genename, biotype, Length, strand, coverage, editRatio, score, gene_expression_counts) %>%
+    distinct() %>%
+    filter(biotype %in% c("CDS", "three_prime_utr")) %>%
+    filter(gene_expression_counts > 0) 
+  
+  
+  
+  # Calculate rpkm
+  
+  sample_rpkm <- sample_sites_counts %>%
+    mutate(
+      per_million_mapped_read_counts = sum(sample_sites_counts$gene_expression_counts) / 1e6,
+      gene_length_kb = Length / 1e3,
+      rpkm = (gene_expression_counts / per_million_mapped_read_counts) / gene_length_kb
+    ) %>%
+    dplyr::select(Geneid, rpkm) %>%
+    rename(!!paste0(sample_name, "_rpkm") := rpkm) %>%
+    distinct()
+  
+  return(sample_rpkm)
+}
+
+
+
+# Calculate rpkm for each sample
+SCR_Rep1_rpkm <- calculate_rpkm(SCR_Rep1, "SCR_Rep1") 
+SCR_Rep2_rpkm <- calculate_rpkm(SCR_Rep2, "SCR_Rep2")
+SCR_Rep3_rpkm <- calculate_rpkm(SCR_Rep3, "SCR_Rep3")
+
+SCR_rpkm <- SCR_Rep1_rpkm %>%
+  full_join(SCR_Rep2_rpkm, by = "Geneid") %>%
+  full_join(SCR_Rep3_rpkm, by = "Geneid") %>%
+  replace_na(list(SCR_Rep1_rpkm = 0, SCR_Rep2_rpkm = 0, SCR_Rep3_rpkm = 0)) %>%
+  filter((SCR_Rep1_rpkm > 0 & SCR_Rep2_rpkm > 0) |
+           (SCR_Rep1_rpkm > 0 & SCR_Rep3_rpkm > 0) |
+           (SCR_Rep2_rpkm > 0 & SCR_Rep3_rpkm > 0))
+
+
+
+shRNA33_Rep1_rpkm <- calculate_rpkm(shRNA33_Rep1, "shRNA33_Rep1")
+shRNA33_Rep2_rpkm <- calculate_rpkm(shRNA33_Rep2, "shRNA33_Rep2")
+shRNA33_Rep3_rpkm <- calculate_rpkm(shRNA33_Rep3, "shRNA33_Rep3")
+
+shRNA33_rpkm <- shRNA33_Rep1_rpkm %>%
+  full_join(shRNA33_Rep2_rpkm, by = "Geneid") %>%
+  full_join(shRNA33_Rep3_rpkm, by = "Geneid") %>%
+  replace_na(list(shRNA33_Rep1_rpkm = 0, shRNA33_Rep2_rpkm = 0, shRNA33_Rep3_rpkm = 0)) %>%
+  filter((shRNA33_Rep1_rpkm > 0 & shRNA33_Rep2_rpkm > 0) |
+           (shRNA33_Rep1_rpkm > 0 & shRNA33_Rep3_rpkm > 0) |
+           (shRNA33_Rep2_rpkm > 0 & shRNA33_Rep3_rpkm > 0))
+
+
+shRNA37_Rep1_rpkm <- calculate_rpkm(shRNA37_Rep1, "shRNA37_Rep1")
+shRNA37_Rep2_rpkm <- calculate_rpkm(shRNA37_Rep2, "shRNA37_Rep2")
+shRNA37_Rep3_rpkm <- calculate_rpkm(shRNA37_Rep3, "shRNA37_Rep3")
+
+shRNA37_rpkm <- shRNA37_Rep1_rpkm %>%
+  full_join(shRNA37_Rep2_rpkm, by = "Geneid") %>%
+  full_join(shRNA37_Rep3_rpkm, by = "Geneid") %>%
+  replace_na(list(shRNA37_Rep1_rpkm = 0, shRNA37_Rep2_rpkm = 0, shRNA37_Rep3_rpkm = 0)) %>%
+  filter((shRNA37_Rep1_rpkm > 0 & shRNA37_Rep2_rpkm > 0) |
+           (shRNA37_Rep1_rpkm > 0 & shRNA37_Rep3_rpkm > 0) |
+           (shRNA37_Rep2_rpkm > 0 & shRNA37_Rep3_rpkm > 0))
+
+
+# Join Geneid_rpkm data frames by Geneid
+gene_rpkm <- SCR_rpkm %>%
+  full_join(shRNA33_rpkm, by = "Geneid") %>%
+  full_join(shRNA37_rpkm, by = "Geneid") 
+
+
+
+
+```
+
+
+### rpkm scatter plot
+
+#### SCR
+
+```{r}
+# Load required libraries
+library(ggplot2)
+library(dplyr)
+library(ggpmisc)
+
+
+
+p1 <- ggplot(SCR_rpkm, aes(x = log2(SCR_Rep1_rpkm + 1), y = log2(SCR_Rep2_rpkm + 1))) +
+  geom_point(size = 2, alpha = 0.5, color = "#2277B5") +
+  stat_poly_eq(aes(label = paste(stat(adj.rr.label), stat(p.value.label), sep = "*\", \"*")),
+               formula = y ~ x,
+               rr.digits = 3, p.digits = 3,
+               parse = TRUE,
+               label.x = "left", label.y = "top") +
+  labs(title = "control", x = "log2(RPKM + 1) rep1", y = "log2(RPKM + 1) rep2") +
+  theme_classic() +
+  theme(aspect.ratio = 1)
+
+
+# SCR_Rep1_Rep3
+
+p2 <- ggplot(SCR_rpkm, aes(x = log2(SCR_Rep1_rpkm + 1), y = log2(SCR_Rep3_rpkm + 1))) +
+  geom_point(size = 2, alpha = 0.5, color = "#2277B5") +
+  stat_poly_eq(aes(label = paste(stat(adj.rr.label), stat(p.value.label), sep = "*\", \"*")),
+               formula = y ~ x,
+               rr.digits = 3, p.digits = 3,
+               parse = TRUE,
+               label.x = "left", label.y = "top") +
+  labs(title = "control", x = "log2(RPKM + 1) rep1", y = "log2(RPKM + 1) rep3") +
+  theme_classic() +
+  theme(aspect.ratio = 1)
+
+
+# SCR_Rep2_Rep3
+
+p3 <- ggplot(SCR_rpkm, aes(x = log2(SCR_Rep2_rpkm + 1), y = log2(SCR_Rep3_rpkm + 1))) +
+  geom_point(size = 2, alpha = 0.5, color = "#2277B5") +
+  stat_poly_eq(aes(label = paste(stat(adj.rr.label), stat(p.value.label), sep = "*\", \"*")),
+               formula = y ~ x,
+               rr.digits = 3, p.digits = 3,
+               parse = TRUE,
+               label.x = "left", label.y = "top") +
+  labs(title = "control", x = "log2(RPKM + 1) rep2", y = "log2(RPKM + 1) rep3") +
+  theme_classic() +
+  theme(aspect.ratio = 1)
+
+
+library(gridExtra)
+
+# combine the plots
+control_rpkm_scattar <- grid.arrange(p1, p2, p3, nrow = 1)
+
+
+ggsave("output/Ste04.control_rpkm_scattar.pdf", plot = control_rpkm_scattar, device = "pdf", width = 8, height = 6)
+
+```
+
+
+
+
+
+
+
+
+#### shRNA33
+
+
+```{r}
+# Load required libraries
+library(ggplot2)
+library(dplyr)
+library(ggpmisc)
+
+
+
+p1 <- ggplot(shRNA33_rpkm, aes(x = log2(shRNA33_Rep1_rpkm + 1), y = log2(shRNA33_Rep2_rpkm + 1))) +
+  geom_point(size = 2, alpha = 0.5, color = "#2277B5") +
+  stat_poly_eq(aes(label = paste(stat(adj.rr.label), stat(p.value.label), sep = "*\", \"*")),
+               formula = y ~ x,
+               rr.digits = 3, p.digits = 3,
+               parse = TRUE,
+               label.x = "left", label.y = "top") +
+  labs(title = "KD-33", x = "log2(RPKM + 1) rep1", y = "log2(RPKM + 1) rep2") +
+  theme_classic() +
+  theme(aspect.ratio = 1)
+
+
+# shRNA33_Rep1_Rep3
+
+p2 <- ggplot(shRNA33_rpkm, aes(x = log2(shRNA33_Rep1_rpkm + 1), y = log2(shRNA33_Rep3_rpkm + 1))) +
+  geom_point(size = 2, alpha = 0.5, color = "#2277B5") +
+  stat_poly_eq(aes(label = paste(stat(adj.rr.label), stat(p.value.label), sep = "*\", \"*")),
+               formula = y ~ x,
+               rr.digits = 3, p.digits = 3,
+               parse = TRUE,
+               label.x = "left", label.y = "top") +
+  labs(title = "KD-33", x = "log2(RPKM + 1) rep1", y = "log2(RPKM + 1) rep3") +
+  theme_classic() +
+  theme(aspect.ratio = 1)
+
+
+# shRNA33_Rep2_Rep3
+
+p3 <- ggplot(shRNA33_rpkm, aes(x = log2(shRNA33_Rep2_rpkm + 1), y = log2(shRNA33_Rep3_rpkm + 1))) +
+  geom_point(size = 2, alpha = 0.5, color = "#2277B5") +
+  stat_poly_eq(aes(label = paste(stat(adj.rr.label), stat(p.value.label), sep = "*\", \"*")),
+               formula = y ~ x,
+               rr.digits = 3, p.digits = 3,
+               parse = TRUE,
+               label.x = "left", label.y = "top") +
+  labs(title = "KD-33", x = "log2(RPKM + 1) rep2", y = "log2(RPKM + 1) rep3") +
+  theme_classic() +
+  theme(aspect.ratio = 1)
+
+
+library(gridExtra)
+
+# combine the plots
+KD33_rpkm_scattar <- grid.arrange(p1, p2, p3, nrow = 1)
+
+ggsave("output/Ste04.KD33_rpkm_scattar.pdf", plot = KD33_rpkm_scattar, device = "pdf", width = 8, height = 6)
+```
+
+#### shRNA37
+
+
+```{r}
+# Load required libraries
+library(ggplot2)
+library(dplyr)
+library(ggpmisc)
+
+p1 <- ggplot(shRNA37_rpkm, aes(x = log2(shRNA37_Rep1_rpkm + 1), y = log2(shRNA37_Rep2_rpkm + 1))) +
+  geom_point(size = 2, alpha = 0.5, color = "#2277B5") +
+  stat_poly_eq(aes(label = paste(stat(adj.rr.label), stat(p.value.label), sep = "*\", \"*")),
+               formula = y ~ x,
+               rr.digits = 3, p.digits = 3,
+               parse = TRUE,
+               label.x = "left", label.y = "top") +
+  labs(title = "KD-37", x = "log2(RPKM + 1) rep1", y = "log2(RPKM + 1) rep2") +
+  theme_classic() +
+  theme(aspect.ratio = 1)
+
+
+# shRNA37_Rep1_Rep3
+p2 <- ggplot(shRNA37_rpkm, aes(x = log2(shRNA37_Rep1_rpkm + 1), y = log2(shRNA37_Rep3_rpkm + 1))) +
+  geom_point(size = 2, alpha = 0.5, color = "#2277B5") +
+  stat_poly_eq(aes(label = paste(stat(adj.rr.label), stat(p.value.label), sep = "*\", \"*")),
+               formula = y ~ x,
+               rr.digits = 3, p.digits = 3,
+               parse = TRUE,
+               label.x = "left", label.y = "top") +
+  labs(title = "KD-37", x = "log2(RPKM + 1) rep1", y = "log2(RPKM + 1) rep3") +
+  theme_classic() +
+  theme(aspect.ratio = 1)
+
+
+# shRNA37_Rep2_Rep3
+p3 <- ggplot(shRNA37_rpkm, aes(x = log2(shRNA37_Rep2_rpkm + 1), y = log2(shRNA37_Rep3_rpkm + 1))) +
+  geom_point(size = 2, alpha = 0.5, color = "#2277B5") +
+  stat_poly_eq(aes(label = paste(stat(adj.rr.label), stat(p.value.label), sep = "*\", \"*")),
+               formula = y ~ x,
+               rr.digits = 3, p.digits = 3,
+               parse = TRUE,
+               label.x = "left", label.y = "top") +
+  labs(title = "KD-37", x = "log2(RPKM + 1) rep2", y = "log2(RPKM + 1) rep3") +
+  theme_classic() +
+  theme(aspect.ratio = 1)
+
+
+library(gridExtra)
+
+# combine the plots
+KD37_rpkm_scattar <- grid.arrange(p1, p2, p3, nrow = 1)
+
+ggsave("output/Ste04.KD37_rpkm_scattar.pdf", plot = KD37_rpkm_scattar, device = "pdf", width = 8, height = 6)
+```
+
+
+
+
+# RBD
+
+```{r}
+library(dplyr)
+library(tidyverse)
+# Define function to calculate rbd for a given sample data frame
+calculate_rbd <- function(sample_df, sample_name) {
+  # Rename columns and join with gene count data frame
+  sample_sites_counts <- sample_df %>%
+    left_join(gene_count, by = "Geneid") %>%
+    rename(gene_expression_counts = !!sym(sample_name),
+          coverage := paste0(sample_name, "_coverage"),
+          editRatio := paste0(sample_name, "_editRatio"),
+          score := paste0(sample_name, "_score")) %>% 
+    dplyr::select(chr, start, Geneid, Genename, biotype, Length, strand, coverage, editRatio, score, gene_expression_counts) %>%
+    distinct() %>%
+    filter(biotype %in% c("CDS", "three_prime_utr")) %>%
+    filter(gene_expression_counts > 0) 
+  
+  # Calculate edited reads count and sum them for each gene
+  sample_edited_reads <- sample_sites_counts %>%
+    mutate(across(c(coverage, editRatio), as.numeric)) %>% # convert to numeric
+    mutate(edited_reads = coverage * editRatio) %>%
+    group_by(Geneid, Length, gene_expression_counts) %>%
+    summarise(sum_edited_reads = sum(edited_reads), .groups = "drop")
+  
+  # Calculate rbd
+  
+  sample_rbd <- sample_edited_reads %>%
+    mutate(
+      rbd = (sum_edited_reads / gene_expression_counts) ) %>%
+    dplyr::select(Geneid, rbd) %>%
+    rename(!!paste0(sample_name, "_rbd") := rbd) %>%
+    distinct()
+  
+  return(sample_rbd)
+}
+
+
+
+# Calculate rbd for each sample
+SCR_Rep1_rbd <- calculate_rbd(SCR_Rep1, "SCR_Rep1") 
+SCR_Rep2_rbd <- calculate_rbd(SCR_Rep2, "SCR_Rep2")
+SCR_Rep3_rbd <- calculate_rbd(SCR_Rep3, "SCR_Rep3")
+
+SCR_rbd <- SCR_Rep1_rbd %>%
+  full_join(SCR_Rep2_rbd, by = "Geneid") %>%
+  full_join(SCR_Rep3_rbd, by = "Geneid") %>%
+  replace_na(list(SCR_Rep1_rbd = 0, SCR_Rep2_rbd = 0, SCR_Rep3_rbd = 0)) %>%
+  filter((SCR_Rep1_rbd > 0 & SCR_Rep2_rbd > 0) |
+           (SCR_Rep1_rbd > 0 & SCR_Rep3_rbd > 0) |
+           (SCR_Rep2_rbd > 0 & SCR_Rep3_rbd > 0))
+
+
+
+shRNA33_Rep1_rbd <- calculate_rbd(shRNA33_Rep1, "shRNA33_Rep1")
+shRNA33_Rep2_rbd <- calculate_rbd(shRNA33_Rep2, "shRNA33_Rep2")
+shRNA33_Rep3_rbd <- calculate_rbd(shRNA33_Rep3, "shRNA33_Rep3")
+
+shRNA33_rbd <- shRNA33_Rep1_rbd %>%
+  full_join(shRNA33_Rep2_rbd, by = "Geneid") %>%
+  full_join(shRNA33_Rep3_rbd, by = "Geneid") %>%
+  replace_na(list(shRNA33_Rep1_rbd = 0, shRNA33_Rep2_rbd = 0, shRNA33_Rep3_rbd = 0)) %>%
+  filter((shRNA33_Rep1_rbd > 0 & shRNA33_Rep2_rbd > 0) |
+           (shRNA33_Rep1_rbd > 0 & shRNA33_Rep3_rbd > 0) |
+           (shRNA33_Rep2_rbd > 0 & shRNA33_Rep3_rbd > 0))
+
+
+shRNA37_Rep1_rbd <- calculate_rbd(shRNA37_Rep1, "shRNA37_Rep1")
+shRNA37_Rep2_rbd <- calculate_rbd(shRNA37_Rep2, "shRNA37_Rep2")
+shRNA37_Rep3_rbd <- calculate_rbd(shRNA37_Rep3, "shRNA37_Rep3")
+
+shRNA37_rbd <- shRNA37_Rep1_rbd %>%
+  full_join(shRNA37_Rep2_rbd, by = "Geneid") %>%
+  full_join(shRNA37_Rep3_rbd, by = "Geneid") %>%
+  replace_na(list(shRNA37_Rep1_rbd = 0, shRNA37_Rep2_rbd = 0, shRNA37_Rep3_rbd = 0)) %>%
+  filter((shRNA37_Rep1_rbd > 0 & shRNA37_Rep2_rbd > 0) |
+           (shRNA37_Rep1_rbd > 0 & shRNA37_Rep3_rbd > 0) |
+           (shRNA37_Rep2_rbd > 0 & shRNA37_Rep3_rbd > 0))
+
+
+# Join Geneid_rbd data frames by Geneid
+gene_rbd <- SCR_rbd %>%
+  full_join(shRNA33_rbd, by = "Geneid") %>%
+  full_join(shRNA37_rbd, by = "Geneid") 
+
+
+
+
+```
+
+
+### rbd scatter plot
+
+#### SCR
+
+```{r}
+# Load required libraries
+library(ggplot2)
+library(dplyr)
+library(ggpmisc)
+
+
+
+p1 <- ggplot(SCR_rbd, aes(x = log2(SCR_Rep1_rbd + 1), y = log2(SCR_Rep2_rbd + 1))) +
+  geom_point(size = 2, alpha = 0.5, color = "#2277B5") +
+  stat_poly_eq(aes(label = paste(stat(adj.rr.label), stat(p.value.label), sep = "*\", \"*")),
+               formula = y ~ x,
+               rr.digits = 3, p.digits = 3,
+               parse = TRUE,
+               label.x = "left", label.y = "top") +
+  labs(title = "control", x = "log2(RBD + 1) rep1", y = "log2(RBD + 1) rep2") +
+  theme_classic() +
+  theme(aspect.ratio = 1)
+
+
+# SCR_Rep1_Rep3
+
+p2 <- ggplot(SCR_rbd, aes(x = log2(SCR_Rep1_rbd + 1), y = log2(SCR_Rep3_rbd + 1))) +
+  geom_point(size = 2, alpha = 0.5, color = "#2277B5") +
+  stat_poly_eq(aes(label = paste(stat(adj.rr.label), stat(p.value.label), sep = "*\", \"*")),
+               formula = y ~ x,
+               rr.digits = 3, p.digits = 3,
+               parse = TRUE,
+               label.x = "left", label.y = "top") +
+  labs(title = "control", x = "log2(RBD + 1) rep1", y = "log2(RBD + 1) rep3") +
+  theme_classic() +
+  theme(aspect.ratio = 1)
+
+
+# SCR_Rep2_Rep3
+
+p3 <- ggplot(SCR_rbd, aes(x = log2(SCR_Rep2_rbd + 1), y = log2(SCR_Rep3_rbd + 1))) +
+  geom_point(size = 2, alpha = 0.5, color = "#2277B5") +
+  stat_poly_eq(aes(label = paste(stat(adj.rr.label), stat(p.value.label), sep = "*\", \"*")),
+               formula = y ~ x,
+               rr.digits = 3, p.digits = 3,
+               parse = TRUE,
+               label.x = "left", label.y = "top") +
+  labs(title = "control", x = "log2(RBD + 1) rep2", y = "log2(RBD + 1) rep3") +
+  theme_classic() +
+  theme(aspect.ratio = 1)
+
+
+library(gridExtra)
+
+# combine the plots
+control_rbd_scattar <- grid.arrange(p1, p2, p3, nrow = 1)
+
+
+ggsave("output/Ste04.control_rbd_scattar.pdf", plot = control_rbd_scattar, device = "pdf", width = 8, height = 6)
+
+```
+
+
+
+
+
+
+
+
+#### shRNA33
+
+
+```{r}
+# Load required libraries
+library(ggplot2)
+library(dplyr)
+library(ggpmisc)
+
+
+
+p1 <- ggplot(shRNA33_rbd, aes(x = log2(shRNA33_Rep1_rbd + 1), y = log2(shRNA33_Rep2_rbd + 1))) +
+  geom_point(size = 2, alpha = 0.5, color = "#2277B5") +
+  stat_poly_eq(aes(label = paste(stat(adj.rr.label), stat(p.value.label), sep = "*\", \"*")),
+               formula = y ~ x,
+               rr.digits = 3, p.digits = 3,
+               parse = TRUE,
+               label.x = "left", label.y = "top") +
+  labs(title = "KD-33", x = "log2(RBD + 1) rep1", y = "log2(RBD + 1) rep2") +
+  theme_classic() +
+  theme(aspect.ratio = 1)
+
+
+# shRNA33_Rep1_Rep3
+
+p2 <- ggplot(shRNA33_rbd, aes(x = log2(shRNA33_Rep1_rbd + 1), y = log2(shRNA33_Rep3_rbd + 1))) +
+  geom_point(size = 2, alpha = 0.5, color = "#2277B5") +
+  stat_poly_eq(aes(label = paste(stat(adj.rr.label), stat(p.value.label), sep = "*\", \"*")),
+               formula = y ~ x,
+               rr.digits = 3, p.digits = 3,
+               parse = TRUE,
+               label.x = "left", label.y = "top") +
+  labs(title = "KD-33", x = "log2(RBD + 1) rep1", y = "log2(RBD + 1) rep3") +
+  theme_classic() +
+  theme(aspect.ratio = 1)
+
+
+# shRNA33_Rep2_Rep3
+
+p3 <- ggplot(shRNA33_rbd, aes(x = log2(shRNA33_Rep2_rbd + 1), y = log2(shRNA33_Rep3_rbd + 1))) +
+  geom_point(size = 2, alpha = 0.5, color = "#2277B5") +
+  stat_poly_eq(aes(label = paste(stat(adj.rr.label), stat(p.value.label), sep = "*\", \"*")),
+               formula = y ~ x,
+               rr.digits = 3, p.digits = 3,
+               parse = TRUE,
+               label.x = "left", label.y = "top") +
+  labs(title = "KD-33", x = "log2(RBD + 1) rep2", y = "log2(RBD + 1) rep3") +
+  theme_classic() +
+  theme(aspect.ratio = 1)
+
+
+library(gridExtra)
+
+# combine the plots
+KD33_rbd_scattar <- grid.arrange(p1, p2, p3, nrow = 1)
+
+ggsave("output/Ste04.KD33_rbd_scattar.pdf", plot = KD33_rbd_scattar, device = "pdf", width = 8, height = 6)
+```
+
+#### shRNA37
+
+
+```{r}
+# Load required libraries
+library(ggplot2)
+library(dplyr)
+library(ggpmisc)
+
+p1 <- ggplot(shRNA37_rbd, aes(x = log2(shRNA37_Rep1_rbd + 1), y = log2(shRNA37_Rep2_rbd + 1))) +
+  geom_point(size = 2, alpha = 0.5, color = "#2277B5") +
+  stat_poly_eq(aes(label = paste(stat(adj.rr.label), stat(p.value.label), sep = "*\", \"*")),
+               formula = y ~ x,
+               rr.digits = 3, p.digits = 3,
+               parse = TRUE,
+               label.x = "left", label.y = "top") +
+  labs(title = "KD-37", x = "log2(RBD + 1) rep1", y = "log2(RBD + 1) rep2") +
+  theme_classic() +
+  theme(aspect.ratio = 1)
+
+
+# shRNA37_Rep1_Rep3
+p2 <- ggplot(shRNA37_rbd, aes(x = log2(shRNA37_Rep1_rbd + 1), y = log2(shRNA37_Rep3_rbd + 1))) +
+  geom_point(size = 2, alpha = 0.5, color = "#2277B5") +
+  stat_poly_eq(aes(label = paste(stat(adj.rr.label), stat(p.value.label), sep = "*\", \"*")),
+               formula = y ~ x,
+               rr.digits = 3, p.digits = 3,
+               parse = TRUE,
+               label.x = "left", label.y = "top") +
+  labs(title = "KD-37", x = "log2(RBD + 1) rep1", y = "log2(RBD + 1) rep3") +
+  theme_classic() +
+  theme(aspect.ratio = 1)
+
+
+# shRNA37_Rep2_Rep3
+p3 <- ggplot(shRNA37_rbd, aes(x = log2(shRNA37_Rep2_rbd + 1), y = log2(shRNA37_Rep3_rbd + 1))) +
+  geom_point(size = 2, alpha = 0.5, color = "#2277B5") +
+  stat_poly_eq(aes(label = paste(stat(adj.rr.label), stat(p.value.label), sep = "*\", \"*")),
+               formula = y ~ x,
+               rr.digits = 3, p.digits = 3,
+               parse = TRUE,
+               label.x = "left", label.y = "top") +
+  labs(title = "KD-37", x = "log2(RBD + 1) rep2", y = "log2(RBD + 1) rep3") +
+  theme_classic() +
+  theme(aspect.ratio = 1)
+
+
+library(gridExtra)
+
+# combine the plots
+KD37_rbd_scattar <- grid.arrange(p1, p2, p3, nrow = 1)
+
+ggsave("output/Ste04.KD37_rbd_scattar.pdf", plot = KD37_rbd_scattar, device = "pdf", width = 8, height = 6)
+```
+
+
+
+
+
+
+# nsites scatter plot
+
+```{r}
+# count_gene_nsites function
+count_gene_nsites <- function(sample, prefix) {
+  sample_gene_nsites <- sample %>%
+    filter(biotype %in% c("CDS", "three_prime_utr"))%>%
+    dplyr::select(Geneid, start) %>%
+    distinct() %>% 
+    group_by(Geneid) %>%
+    count() %>%
+    rename(!!paste0(prefix, "_nsites") := n) 
+  
+  return(sample_gene_nsites)
+}
+
+
+
+SCR_Rep1_gene_nsites <- count_gene_nsites(SCR_Rep1,"SCR_Rep1")
+SCR_Rep2_gene_nsites <- count_gene_nsites(SCR_Rep2,"SCR_Rep2")
+SCR_Rep3_gene_nsites <- count_gene_nsites(SCR_Rep3,"SCR_Rep3")
+
+shRNA33_Rep1_gene_nsites <- count_gene_nsites(shRNA33_Rep1,"shRNA33_Rep1")
+shRNA33_Rep2_gene_nsites <- count_gene_nsites(shRNA33_Rep2,"shRNA33_Rep2")
+shRNA33_Rep3_gene_nsites <- count_gene_nsites(shRNA33_Rep3,"shRNA33_Rep3")
+
+shRNA37_Rep1_gene_nsites <- count_gene_nsites(shRNA37_Rep1,"shRNA37_Rep1")
+shRNA37_Rep2_gene_nsites <- count_gene_nsites(shRNA37_Rep2,"shRNA37_Rep2")
+shRNA37_Rep3_gene_nsites <- count_gene_nsites(shRNA37_Rep3,"shRNA37_Rep3")
+
+
+# Merge the data frames using full_join()
+gene_nsites <- full_join(SCR_Rep1_gene_nsites, SCR_Rep2_gene_nsites, by = "Geneid") %>%
+  full_join(SCR_Rep3_gene_nsites, by = "Geneid") %>%
+  full_join(shRNA33_Rep1_gene_nsites, by = "Geneid") %>%
+  full_join(shRNA33_Rep2_gene_nsites, by = "Geneid") %>%
+  full_join(shRNA33_Rep3_gene_nsites, by = "Geneid") %>%
+  full_join(shRNA37_Rep1_gene_nsites, by = "Geneid") %>%
+  full_join(shRNA37_Rep2_gene_nsites, by = "Geneid") %>%
+  full_join(shRNA37_Rep3_gene_nsites, by = "Geneid")
+
+# Replace NA values with 0
+gene_nsites <- gene_nsites %>%
+  mutate_all(~ ifelse(is.na(.), 0, .)) 
+
+class(gene_nsites) # [1] "grouped_df" "tbl_df"     "tbl"        "data.frame"
+
+# ungroup data frame
+gene_nsites <- ungroup(gene_nsites)
+
+
+
+
+
+```
+
+
+
+
+
+### SCR
+
+```{r}
+# Load required libraries
+library(ggplot2)
+library(dplyr)
+library(ggpmisc)
+
+
+
+p1 <- ggplot(gene_nsites, aes(x = SCR_Rep1_nsites, y = SCR_Rep2_nsites)) +
+  geom_point(size = 2, alpha = 0.5, color = "#2277B5") +
+  stat_poly_eq(aes(label = paste(stat(adj.rr.label), stat(p.value.label), sep = "*\", \"*")),
+               formula = y ~ x,
+               rr.digits = 3, p.digits = 3,
+               parse = TRUE,
+               label.x = "left", label.y = "top") +
+  labs(title = "control", x = "nsites rep1", y = "nsites rep2") +
+  theme_classic() +
+  theme(aspect.ratio = 1)
+
+
+# SCR_Rep1_Rep3
+
+p2 <- ggplot(gene_nsites, aes(x = SCR_Rep1_nsites, y = SCR_Rep3_nsites)) +
+  geom_point(size = 2, alpha = 0.5, color = "#2277B5") +
+  stat_poly_eq(aes(label = paste(stat(adj.rr.label), stat(p.value.label), sep = "*\", \"*")),
+               formula = y ~ x,
+               rr.digits = 3, p.digits = 3,
+               parse = TRUE,
+               label.x = "left", label.y = "top") +
+  labs(title = "control", x = "nsites rep1", y = "nsites rep3") +
+  theme_classic() +
+  theme(aspect.ratio = 1)
+
+
+# SCR_Rep2_Rep3
+
+p3 <- ggplot(gene_nsites, aes(x = SCR_Rep2_nsites, y = SCR_Rep3_nsites)) +
+  geom_point(size = 2, alpha = 0.5, color = "#2277B5") +
+  stat_poly_eq(aes(label = paste(stat(adj.rr.label), stat(p.value.label), sep = "*\", \"*")),
+               formula = y ~ x,
+               rr.digits = 3, p.digits = 3,
+               parse = TRUE,
+               label.x = "left", label.y = "top") +
+  labs(title = "control", x = "nsites rep2", y = "nsites rep3") +
+  theme_classic() +
+  theme(aspect.ratio = 1)
+
+
+library(gridExtra)
+
+# combine the plots
+control_nsites_scattar <- grid.arrange(p1, p2, p3, nrow = 1)
+
+
+
+ggsave("output/Ste04.control_nsites_scattar.pdf", plot = control_nsites_scattar, device = "pdf", width = 8, height = 6)
+```
+
+### shRNA33
+
+
+```{r}
+# Load required libraries
+library(ggplot2)
+library(dplyr)
+library(ggpmisc)
+
+
+
+p1 <- ggplot(gene_nsites, aes(x = shRNA33_Rep1_nsites, y = shRNA33_Rep2_nsites)) +
+  geom_point(size = 2, alpha = 0.5, color = "#2277B5") +
+  stat_poly_eq(aes(label = paste(stat(adj.rr.label), stat(p.value.label), sep = "*\", \"*")),
+               formula = y ~ x,
+               rr.digits = 3, p.digits = 3,
+               parse = TRUE,
+               label.x = "left", label.y = "top") +
+  labs(title = "KD-33", x = "nsites rep1", y = "nsites rep2") +
+  theme_classic() +
+  theme(aspect.ratio = 1)
+
+
+# shRNA33_Rep1_Rep3
+
+p2 <- ggplot(gene_nsites, aes(x = shRNA33_Rep1_nsites, y = shRNA33_Rep3_nsites)) +
+  geom_point(size = 2, alpha = 0.5, color = "#2277B5") +
+  stat_poly_eq(aes(label = paste(stat(adj.rr.label), stat(p.value.label), sep = "*\", \"*")),
+               formula = y ~ x,
+               rr.digits = 3, p.digits = 3,
+               parse = TRUE,
+               label.x = "left", label.y = "top") +
+  labs(title = "KD-33", x = "nsites rep1", y = "nsites rep3") +
+  theme_classic() +
+  theme(aspect.ratio = 1)
+
+
+# shRNA33_Rep2_Rep3
+
+p3 <- ggplot(gene_nsites, aes(x = shRNA33_Rep2_nsites, y = shRNA33_Rep3_nsites)) +
+  geom_point(size = 2, alpha = 0.5, color = "#2277B5") +
+  stat_poly_eq(aes(label = paste(stat(adj.rr.label), stat(p.value.label), sep = "*\", \"*")),
+               formula = y ~ x,
+               rr.digits = 3, p.digits = 3,
+               parse = TRUE,
+               label.x = "left", label.y = "top") +
+  labs(title = "KD-33", x = "nsites rep2", y = "nsites rep3") +
+  theme_classic() +
+  theme(aspect.ratio = 1)
+
+
+library(gridExtra)
+
+# combine the plots
+KD33_nsites_scattar <- grid.arrange(p1, p2, p3, nrow = 1)
+
+ggsave("output/Ste04.KD33_nsites_scattar.pdf", plot = KD33_nsites_scattar, device = "pdf", width = 8, height = 6)
+
+```
+
+### shRNA37
+
+
+```{r}
+# Load required libraries
+library(ggplot2)
+library(dplyr)
+library(ggpmisc)
+
+
+
+p1 <- ggplot(gene_nsites, aes(x = shRNA37_Rep1_nsites, y = shRNA37_Rep2_nsites)) +
+  geom_point(size = 2, alpha = 0.5, color = "#2277B5") +
+  stat_poly_eq(aes(label = paste(stat(adj.rr.label), stat(p.value.label), sep = "*\", \"*")),
+               formula = y ~ x,
+               rr.digits = 3, p.digits = 3,
+               parse = TRUE,
+               label.x = "left", label.y = "top") +
+  labs(title = "KD-37", x = "nsites rep1", y = "nsites rep2") +
+  theme_classic() +
+  theme(aspect.ratio = 1)
+
+
+# shRNA37_Rep1_Rep3
+
+p2 <- ggplot(gene_nsites, aes(x = shRNA37_Rep1_nsites, y = shRNA37_Rep3_nsites)) +
+  geom_point(size = 2, alpha = 0.5, color = "#2277B5") +
+  stat_poly_eq(aes(label = paste(stat(adj.rr.label), stat(p.value.label), sep = "*\", \"*")),
+               formula = y ~ x,
+               rr.digits = 3, p.digits = 3,
+               parse = TRUE,
+               label.x = "left", label.y = "top") +
+  labs(title = "KD-37", x = "nsites rep1", y = "nsites rep3") +
+  theme_classic() +
+  theme(aspect.ratio = 1)
+
+
+# shRNA37_Rep2_Rep3
+
+p3 <- ggplot(gene_nsites, aes(x = shRNA37_Rep2_nsites, y = shRNA37_Rep3_nsites)) +
+  geom_point(size = 2, alpha = 0.5, color = "#2277B5") +
+  stat_poly_eq(aes(label = paste(stat(adj.rr.label), stat(p.value.label), sep = "*\", \"*")),
+               formula = y ~ x,
+               rr.digits = 3, p.digits = 3,
+               parse = TRUE,
+               label.x = "left", label.y = "top") +
+  labs(title = "KD-37", x = "nsites rep2", y = "nsites rep3") +
+  theme_classic() +
+  theme(aspect.ratio = 1)
+
+
+library(gridExtra)
+
+# combine the plots
+KD37_nsites_scattar <- grid.arrange(p1, p2, p3, nrow = 1)
+
+ggsave("output/Ste04.KD37_nsites_scattar.pdf", plot = KD37_nsites_scattar, device = "pdf", width = 8, height = 6)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+# save data
+
+```{r}
+save(gene_epkm, gene_rpkm, gene_rbd, gene_nsites, file = "output/Step04.gene_epkm_rpkm_rbd_nsites.rdata")
+```
+
+
+

@@ -1,0 +1,857 @@
+---
+title: "Step04.Edites_distribution_MetagenePlot"
+author: "Vu lab"
+date: "2023-06-19"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# metagene plot
+https://github.com/olarerin/metaPlotR
+
+Use  metagene plot to visualize C2U edit global patterns or trends of multiple genomic regions.
+
+A metagene plot is a graphical representation of the level of a specific molecular event (e.g. transcription, splicing, or editing) occurring across a set of genes or transcripts. The metagene plot was likely used to visualize the distribution of C-to-U editing events across a set of genes. The x-axis represents the position within the transcript, while the y-axis represents the level of editing.
+
+
+
+During identifies the region of the transcript in which the user supplied sites fall and converts the transcriptomic coordinates to metagene coordinates. Namely, sites that occur in the 5’UTR have a value from 0 to 1, where 0 and 1 represent the 5’ and 3’ ends of the 5’UTR, respectively. Similarly, sites in the CDS have a value from 1 to 2 and the 3’UTR 2 to 3. 
+
+C2U_sites_metagene is a dataframe that contain columns: chr, start, end, gene, biotype,C2URatio, confidence score. chr is chromosome, start is C2U edit site, biotype contain genes ragin: 5UTR, CDS and 3UTR, confidence score.
+
+
+
+
+## keep high confidence edit sites 
+
+confidence score >= 0.5 filters
+
+
+$ vi annotate_metagene_cord.sh
+
+```
+#!/bin/bash
+#SBATCH --mem=60G
+#SBATCH -c 8
+#SBATCH -t 0-4:00:00
+#SBATCH -a 1-9
+
+
+#adjust number of arrays to correspond to number of files to process 
+#depending on the size of your files, you may need to adjust the amount of RAM used
+
+# activate the environment
+
+source activate Bullseye
+
+cd /home/zongmin/scratch/Ribostamp/metaPlotR/sailor_C2U_sorted_bed
+
+
+# can change ls to sorted.bed files
+
+file=$(ls *.sorted.bed | sed -n ${SLURM_ARRAY_TASK_ID}p)   
+
+STEM=${file%.sorted.bed}
+
+echo 'processing' $file
+
+echo 'Started at' `date +"%D %H:%M"`
+
+
+
+
+# step3_annotate_bed_file
+# perl annotate_bed_file.pl --bed $file --bed2 ../GRCh38_annot.sorted.bed > annot_$file
+
+# keep high confidence edit sites (confidence score >= 0.5 filters)
+# awk '$5 >= 0.5' $file > confidence0.5_$file
+
+
+
+# step 4.rel_and_abs_dist_calc.pl
+perl rel_and_abs_dist_calc.pl --bed confidence0.5_2sites_$file --regions region_sizes.txt > $STEM.confidence0.5.dist.measures.txt
+
+
+echo 'Ended at' `date +"%D %H:%M"`
+
+
+```
+
+
+## the overlap sites at least two samples from each group filter 
+
+
+```{r eval=FALSE}
+
+
+
+filter_bed_file <- function(input_bed_file, site_list_file, output_bed_file) {
+  # Read input files
+  bed_data <- read_delim(input_bed_file, delim = "\t", col_names = FALSE)
+  site_list <- read_delim(site_list_file, delim = "\t", col_names = FALSE)
+  
+  # Filter the bed_data based on the values in the site_list
+  filtered_bed_data <- bed_data %>%
+    filter(X2 %in% site_list$X1)
+  
+  # Save the filtered data to the output file without column names
+  write_delim(filtered_bed_data, output_bed_file, delim = "\t", col_names = FALSE)
+}
+
+# Example usage:
+filter_bed_file("metaPlotR/input/confidence0.5_annot_SCR_Rep1.sorted.bed", "output/site_list/SCR_site_list.txt", "metaPlotR/output/confidence0.5_2sites_annot_SCR_Rep1.sorted.bed")
+
+filter_bed_file("metaPlotR/input/confidence0.5_annot_SCR_Rep2.sorted.bed", "output/site_list/SCR_site_list.txt", "metaPlotR/output/confidence0.5_2sites_annot_SCR_Rep2.sorted.bed")
+
+filter_bed_file("metaPlotR/input/confidence0.5_annot_SCR_Rep3.sorted.bed", "output/site_list/SCR_site_list.txt", "metaPlotR/output/confidence0.5_2sites_annot_SCR_Rep3.sorted.bed")
+
+filter_bed_file("metaPlotR/input/confidence0.5_annot_shRNA33_Rep1.sorted.bed", "output/site_list/shRNA33_site_list.txt", "metaPlotR/output/confidence0.5_2sites_annot_shRNA33_Rep1.sorted.bed")
+
+filter_bed_file("metaPlotR/input/confidence0.5_annot_shRNA33_Rep2.sorted.bed", "output/site_list/shRNA33_site_list.txt", "metaPlotR/output/confidence0.5_2sites_annot_shRNA33_Rep2.sorted.bed")
+
+filter_bed_file("metaPlotR/input/confidence0.5_annot_shRNA33_Rep3.sorted.bed", "output/site_list/shRNA33_site_list.txt", "metaPlotR/output/confidence0.5_2sites_annot_shRNA33_Rep3.sorted.bed")
+
+filter_bed_file("metaPlotR/input/confidence0.5_annot_shRNA37_Rep1.sorted.bed", "output/site_list/shRNA37_site_list.txt", "metaPlotR/output/confidence0.5_2sites_annot_shRNA37_Rep1.sorted.bed")
+
+filter_bed_file("metaPlotR/input/confidence0.5_annot_shRNA37_Rep2.sorted.bed", "output/site_list/shRNA37_site_list.txt", "metaPlotR/output/confidence0.5_2sites_annot_shRNA37_Rep2.sorted.bed")
+
+filter_bed_file("metaPlotR/input/confidence0.5_annot_shRNA37_Rep3.sorted.bed", "output/site_list/shRNA37_site_list.txt", "metaPlotR/output/confidence0.5_2sites_annot_shRNA37_Rep3.sorted.bed")
+```
+
+```
+perl rel_and_abs_dist_calc.pl --bed confidence0.5_2sites_annot_SCR_Rep1.sorted.bed --regions region_sizes.txt > annot_SCR_Rep1.confidence0.5.2sites.dist.measures.txt
+
+perl rel_and_abs_dist_calc.pl --bed confidence0.5_2sites_annot_SCR_Rep2.sorted.bed --regions region_sizes.txt > annot_SCR_Rep2.confidence0.5.2sites.dist.measures.txt
+
+perl rel_and_abs_dist_calc.pl --bed confidence0.5_2sites_annot_SCR_Rep3.sorted.bed --regions region_sizes.txt > annot_SCR_Rep3.confidence0.5.2sites.dist.measures.txt
+
+
+perl rel_and_abs_dist_calc.pl --bed confidence0.5_2sites_annot_shRNA33_Rep1.sorted.bed --regions region_sizes.txt > annot_shRNA33_Rep1.confidence0.5.2sites.dist.measures.txt
+
+perl rel_and_abs_dist_calc.pl --bed confidence0.5_2sites_annot_shRNA33_Rep2.sorted.bed --regions region_sizes.txt > annot_shRNA33_Rep2.confidence0.5.2sites.dist.measures.txt
+
+perl rel_and_abs_dist_calc.pl --bed confidence0.5_2sites_annot_shRNA33_Rep3.sorted.bed --regions region_sizes.txt > annot_shRNA33_Rep3.confidence0.5.2sites.dist.measures.txt
+
+
+perl rel_and_abs_dist_calc.pl --bed confidence0.5_2sites_annot_shRNA37_Rep1.sorted.bed --regions region_sizes.txt > annot_shRNA37_Rep1.confidence0.5.2sites.dist.measures.txt
+
+perl rel_and_abs_dist_calc.pl --bed confidence0.5_2sites_annot_shRNA37_Rep2.sorted.bed --regions region_sizes.txt > annot_shRNA37_Rep2.confidence0.5.2sites.dist.measures.txt
+
+perl rel_and_abs_dist_calc.pl --bed confidence0.5_2sites_annot_shRNA37_Rep3.sorted.bed --regions region_sizes.txt > annot_shRNA37_Rep3.confidence0.5.2sites.dist.measures.txt
+```
+
+
+
+# metagene plot
+
+## 9 samples
+
+### metagene.coord
+
+```{r}
+
+# the function definition for metagene_coord
+metagene_coord <- function(file_path, prefix) {
+  # read the data
+  data <- read.delim(file_path, header = TRUE)
+  
+  # Determine longest length transcript for each gene
+  trx_len <- data$utr5_size + data$cds_size + data$utr3_size # Determine transcript length
+  temp <- data.frame(data$gene_name, data$refseqID, trx_len)
+  colnames(temp) <- c("gene_name", "gid", "trx_len") 
+  temp.df <- temp[order(temp$gene_name, temp$gid, -temp$trx_len),]
+  temp.df <- temp[!duplicated(temp$gene_name),]
+  
+  # limit m6a data to one transcript per gene (longest)
+  data <- data[data$refseqID %in% temp.df$gid,]
+  
+  utr5.SF <- median(data$utr5_size, na.rm = TRUE)/median(data$cds_size, na.rm = TRUE)
+  utr3.SF <- median(data$utr3_size, na.rm = TRUE)/median(data$cds_size, na.rm = TRUE)
+  
+  # assign the regions to new dataframes
+  utr5.data <- data[data$rel_location < 1, ]
+  cds.data <- data [data$rel_location < 2 & data$rel_location >= 1, ]
+  utr3.data <- data[data$rel_location >= 2, ]
+  
+  # rescale 5'UTR and 3'UTR
+  library(scales)
+  utr5.data$rel_location <- rescale(utr5.data$rel_location, to = c(1-utr5.SF, 1), from = c(0,1))
+  utr3.data$rel_location <- rescale(utr3.data$rel_location, to = c(2, 2+utr3.SF), from = c(2,3))
+  
+  # Combine and return the metagene.coord
+  metagene.coord <- c(utr5.data$rel_location, cds.data$rel_location, utr3.data$rel_location)
+  return(metagene.coord)
+}
+
+
+
+
+```
+
+
+
+### metagene plot
+
+```{r}
+library(ggplot2)
+# get metagene.coord
+SCR_Rep1.metagene.coord <- metagene_coord("data/annot_SCR_Rep1.confidence0.5.2sites.dist.measures.txt", "SCR_Rep1")
+SCR_Rep2.metagene.coord <- metagene_coord("data/annot_SCR_Rep2.confidence0.5.2sites.dist.measures.txt", "SCR_Rep2")
+SCR_Rep3.metagene.coord <- metagene_coord("data/annot_SCR_Rep3.confidence0.5.2sites.dist.measures.txt", "SCR_Rep3")
+
+shRNA33_Rep1.metagene.coord <- metagene_coord("data/annot_shRNA33_Rep1.confidence0.5.2sites.dist.measures.txt", "shRNA33_Rep1")
+shRNA33_Rep2.metagene.coord <- metagene_coord("data/annot_shRNA33_Rep2.confidence0.5.2sites.dist.measures.txt", "shRNA33_Rep2")
+shRNA33_Rep3.metagene.coord <- metagene_coord("data/annot_shRNA33_Rep3.confidence0.5.2sites.dist.measures.txt", "shRNA33_Rep3")
+
+shRNA37_Rep1.metagene.coord <- metagene_coord("data/annot_shRNA37_Rep1.confidence0.5.2sites.dist.measures.txt", "shRNA37_Rep1")
+shRNA37_Rep2.metagene.coord <- metagene_coord("data/annot_shRNA37_Rep2.confidence0.5.2sites.dist.measures.txt", "shRNA37_Rep2")
+shRNA37_Rep3.metagene.coord <- metagene_coord("data/annot_shRNA37_Rep3.confidence0.5.2sites.dist.measures.txt", "shRNA37_Rep3")
+
+
+# metagen plot
+metagene.cord <- c(SCR_Rep1.metagene.coord, SCR_Rep2.metagene.coord,SCR_Rep3.metagene.coord,
+                   shRNA33_Rep1.metagene.coord, shRNA33_Rep2.metagene.coord,shRNA33_Rep3.metagene.coord,
+                   shRNA37_Rep1.metagene.coord, shRNA37_Rep2.metagene.coord,shRNA37_Rep3.metagene.coord
+                   )
+mod <- c(rep("SCR_Rep1", length(SCR_Rep1.metagene.coord)), 
+         rep("SCR_Rep2", length(SCR_Rep2.metagene.coord)), 
+         rep("SCR_Rep3", length(SCR_Rep3.metagene.coord)), 
+         rep("shRNA33_Rep1", length(shRNA33_Rep1.metagene.coord)), 
+         rep("shRNA33_Rep2", length(shRNA33_Rep2.metagene.coord)), 
+         rep("shRNA33_Rep3", length(shRNA33_Rep3.metagene.coord)),  
+         rep("shRNA37_Rep1", length(shRNA37_Rep1.metagene.coord)), 
+         rep("shRNA37_Rep2", length(shRNA37_Rep2.metagene.coord)), 
+         rep("shRNA37_Rep3", length(shRNA37_Rep3.metagene.coord))
+         ) 
+
+df <- data.frame(metagene.cord, mod)
+
+# install.packages("ggsci")
+library(ggsci)
+
+
+
+
+ 
+ 
+
+ 
+ 
+
+ 
+ 
+ 
+ # Define vector of color codes for the nine lines
+colors <- c("#C1C0C0","#C1C0C0","#C1C0C0", "#76D7FF","#76D7FF","#76D7FF", "#1796FF","#1796FF","#1796FF")
+
+
+
+ ggplot(df, aes(x = metagene.cord, colour = mod)) +
+  geom_freqpoly(binwidth = 0.05) +
+  geom_vline(xintercept = 1:2, col = "grey") +
+  xlim(0, 3) +
+  scale_color_manual(values = colors) +
+  theme_bw()
+ 
+ 
+
+
+ 
+ 
+ colors <- c("#C1C0C0","#C1C0C0","#C1C0C0", "#76D7FF","#76D7FF","#76D7FF", "#1796FF","#1796FF","#1796FF")
+ 
+ 
+ 
+ Metagene_density_closed <- ggplot(df) + 
+   geom_vline(xintercept = seq(0, 3, 0.25), col = "grey", size = 0.01, linetype = "dotted") +
+  geom_density(aes(x = metagene.cord, colour = mod)) +
+  xlim(0, 3) +
+  scale_color_manual(values = colors, 
+                     labels = c("control rep1","control rep2", "control rep3",
+                                "KD-33 rep1","KD-33 rep2","KD-33 rep3",
+                                "KD-37 rep1","KD-37 rep2","KD-37 rep3"),
+                     name = "") +
+   scale_x_continuous(expand = c(0, 0), 
+                     breaks = seq(0, 3, by = 1), 
+                     limits = c(0, 3)) +
+  theme_bw() + 
+  theme(legend.position = c(0.1, 0.75),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.background = element_rect(fill = "transparent", color = NA),
+        legend.text = element_text(size = 9),
+        legend.title = element_text(size = 9),
+        legend.key.size = unit(0.3, "cm"),
+        aspect.ratio = 1/2)
+ 
+ Metagene_density_open <- ggplot(df) + 
+   geom_vline(xintercept = seq(0, 3, 0.25), col = "grey", size = 0.01, linetype = "dotted") +
+  geom_density(aes(x = metagene.cord, colour = mod)) +
+  xlim(0, 3) +
+  scale_color_manual(values = colors, 
+                     labels = c("control rep1","control rep2", "control rep3",
+                                "KD-33 rep1","KD-33 rep2","KD-33 rep3",
+                                "KD-37 rep1","KD-37 rep2","KD-37 rep3"),
+                     name = "") +
+   scale_x_continuous(expand = c(0, 0), 
+                     breaks = seq(0, 3, by = 1), 
+                     limits = c(0, 3)) +
+  theme_classic() + 
+  theme(legend.position = c(0.1, 0.75),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.background = element_rect(fill = "transparent", color = NA),
+        legend.text = element_text(size = 9),
+        legend.title = element_text(size = 9),
+        legend.key.size = unit(0.3, "cm"),
+        aspect.ratio = 1/2)
+ 
+ 
+ 
+ library(gridExtra)
+Metagene_density <- grid.arrange(Metagene_density_closed, Metagene_density_open, nrow = 2)
+
+Metagene_density
+
+# Save the plot as a PDF file
+ggsave("output/Step04.Metagene_density.pdf", plot = Metagene_density, device = "pdf", width = 8, height = 6)
+
+```
+
+# Cut into bins
+
+
+```{r}
+library(tidyverse)
+# Define the breaks for the cut function
+breaks <- seq(0, 3, by = 0.25)
+
+# Add the "bins" column based on "metagene.cord" values
+df$bins <- cut(df$metagene.cord, breaks = breaks, labels = FALSE, right = FALSE)
+
+
+# Map the bin values to their corresponding range labels
+# df$bins <- cut(df$metagene.cord, breaks = breaks, labels = paste0("(", breaks[-length(breaks)], ", ", breaks[-1], "]"), right = FALSE)
+
+print(df %>% dplyr::select(bins) %>% distinct())
+
+
+# count the occurrences of each combination of "mod" and "bins" values
+meta_bin_edits <- df %>%
+  count(mod, bins, name = "edits")
+
+
+metagene_cord <- df
+
+# save as excel
+library(openxlsx)
+
+# Create a new workbook
+wb <- createWorkbook()
+# Add the data frames as sheets to the workbook
+## sheet1
+addWorksheet(wb, "metagene_cord")
+writeData(wb, "metagene_cord", metagene_cord)
+
+# Save the workbook to a file
+saveWorkbook(wb, "output/Step04.Metagene_density.xlsx", overwrite = TRUE)
+
+
+save(metagene_cord, meta_bin_edits, file = "output/Step04.meta_bin_edits.rdata")
+
+```
+
+## SCR, shRNA33, shRNA37
+
+
+```{r}
+
+load(file = "output/Step04.meta_bin_edits.rdata")
+
+library(tidyverse)
+library(rstatix)
+library(ggpubr)
+
+
+
+Meta_bin_3group <- meta_bin_edits %>%
+  mutate(sample_group = case_when(
+    grepl("SCR", mod) ~ "SCR",
+    grepl("shRNA33", mod) ~ "shRNA33",
+    grepl("shRNA37", mod) ~ "shRNA37"
+  ))
+
+
+# Calculate the standard error (se) values
+se_data <- Meta_bin_3group %>%
+  group_by(bins, sample_group) %>%
+  summarize(mean_edits = mean(edits),
+            se = sd(edits) / sqrt(n()))
+
+# Merge the standard error data with the main data frame
+Meta_bin_3group <- merge(Meta_bin_3group, se_data, by = c("bins","sample_group")) %>%
+  arrange(bins)
+
+
+# Perform t-test
+
+pairwise_comparisons <- Meta_bin_3group %>%
+  group_by(bins) %>%
+  do(pairwise_ttest = tidy(pairwise.t.test(.$edits, .$sample_group, p.adjust.method = "bonferroni")))
+
+
+# Define a null dataframe
+t_test <- data.frame()
+
+# Iterate over each layer and create individual layer dataframes
+for (i in seq_along(pairwise_comparisons[[1]])) {
+  layer_i <- pairwise_comparisons[[2]][[i]] %>%
+    mutate(bin = pairwise_comparisons[[1]][[i]]) %>%
+    relocate(bin, .before = group1)
+  
+  # Assign the layer dataframe to a dynamically generated name
+  assign(paste0("layer_", i), layer_i)
+  
+  # Append the layer dataframe to t_test using rbind
+  t_test <- rbind(t_test, layer_i)
+}
+
+
+
+
+
+
+
+
+
+
+summary_3group <- Meta_bin_3group %>% 
+  dplyr::select(bins,sample_group,mean_edits,se) %>%
+  distinct() %>%
+  arrange(bins)
+
+
+
+
+
+# save as excel
+library(openxlsx)
+
+# Create a new workbook
+wb <- createWorkbook()
+
+# Add the data frames as sheets to the workbook
+
+## sheet1
+addWorksheet(wb, "Meta_bin_3group")
+writeData(wb, "Meta_bin_3group", Meta_bin_3group)
+
+## sheet2
+addWorksheet(wb, "t_test")
+writeData(wb, "t_test", t_test)
+
+## sheet2
+addWorksheet(wb, "summary_3group")
+writeData(wb, "summary_3group", summary_3group)
+
+# Save the workbook to a file
+saveWorkbook(wb, "output/Step04.Metagene_bin_3group.xlsx", overwrite = TRUE)
+
+
+
+# Generate the box plot
+
+colors <- c("#C1C0C0", "#76D7FF", "#1796FF")
+
+
+Metagene_bin_3group <- ggplot(Meta_bin_3group, aes(x = as.factor(bins), y = mean_edits, fill = sample_group)) +
+   geom_bar(stat = "identity", position = position_dodge(width = 0.8), color = "black", width = 0.6) +
+  geom_errorbar(aes(ymin = mean_edits - se, ymax = mean_edits + se), width = 0.4, position = position_dodge(width = 0.8), color = "black", show.legend = FALSE) +
+  labs(x = "", y = "Edits", title = "") +
+  scale_fill_manual(values = colors, 
+                    labels = c("control", "KD-33", "KD-37"),
+                    name = "") +
+  scale_y_continuous(expand = c(0, 0), 
+                     breaks = seq(0, 5000, by = 500), 
+                     limits = c(0, 5000)) +
+  theme_classic() +
+  theme(legend.position = c(0.10, 0.95),
+        legend.text = element_text(size = 9),
+        legend.title = element_text(size = 9),
+        legend.key.size = unit(0.3, "cm"),
+        aspect.ratio = 1/2)
+
+```
+
+
+##  Bins analysis but between 2 groups scr vs. sh (33+ 37)
+
+```{r}
+
+load(file = "output/Step04.meta_bin_edits.rdata")
+
+library(tidyverse)
+library(rstatix)
+library(ggpubr)
+
+
+
+Meta_bin_2group <- meta_bin_edits %>%
+  mutate(sample_group = case_when(
+    grepl("SCR", mod) ~ "SCR",
+    grepl("shRNA33", mod) ~ "shRNA",
+    grepl("shRNA37", mod) ~ "shRNA"
+  )) %>%
+  arrange(bins)
+
+# Calculate the standard error (se) values
+se_data <- Meta_bin_2group %>%
+  group_by(bins, sample_group) %>%
+  summarize(mean_edits = mean(edits),
+            se = sd(edits) / sqrt(n()))
+
+# Merge the standard error data with the main data frame
+Meta_bin_2group <- merge(Meta_bin_2group, se_data, by = c("bins","sample_group"))
+
+
+# Perform Welch_t_test
+
+pairwise_comparisons <- Meta_bin_2group %>%
+  group_by(bins) %>%
+  do(pairwise_ttest = tidy(pairwise.t.test(.$edits, .$sample_group, p.adjust.method = "bonferroni", var.equal = FALSE, pool.sd = FALSE)))
+
+
+ 
+# Define a null dataframe
+Welch_t_test <- data.frame()
+
+# Iterate over each layer and create individual layer dataframes
+for (i in seq_along(pairwise_comparisons[[1]])) {
+  layer_i <- pairwise_comparisons[[2]][[i]] %>%
+    mutate(bin = pairwise_comparisons[[1]][[i]]) %>%
+    relocate(bin, .before = group1)
+  
+  # Assign the layer dataframe to a dynamically generated name
+  assign(paste0("layer_", i), layer_i)
+  
+  # Append the layer dataframe to t_test using rbind
+  Welch_t_test <- rbind(Welch_t_test, layer_i)
+}
+
+
+summary_2group <- Meta_bin_2group %>% 
+  dplyr::select(bins,sample_group,mean_edits,se) %>%
+  distinct() %>%
+  arrange(bins)
+
+# save as excel
+library(openxlsx)
+
+# Create a new workbook
+wb <- createWorkbook()
+
+# Add the data frames as sheets to the workbook
+## sheet1
+addWorksheet(wb, "Meta_bin_2group")
+writeData(wb, "Meta_bin_2group", Meta_bin_2group)
+
+## sheet2
+addWorksheet(wb, "Welch_t_test")
+writeData(wb, "Welch_t_test", Welch_t_test)
+
+## sheet3
+addWorksheet(wb, "summary_2group")
+writeData(wb, "summary_2group", summary_2group)
+
+# Save the workbook to a file
+saveWorkbook(wb, "output/Step04.Metagene_bin_2group.xlsx", overwrite = TRUE)
+
+
+
+# Generate the box plot
+
+colors <- c("#C1C0C0", "#1796FF")
+
+Metagene_bin_2group <- ggplot(Meta_bin_2group, aes(x = as.factor(bins), y = mean_edits, fill = sample_group)) +
+   geom_bar(stat = "identity", position = position_dodge(width = 0.8), color = "black", width = 0.6) +
+  geom_errorbar(aes(ymin = mean_edits - se, ymax = mean_edits + se), width = 0.4, position = position_dodge(width = 0.8), color = "black", show.legend = FALSE) +
+  labs(x = "", y = "Edits", title = "") +
+  scale_fill_manual(values = colors, 
+                    labels = c("control", "KD"),
+                    name = "") +
+  scale_y_continuous(expand = c(0, 0), 
+                     breaks = seq(0, 5000, by = 500), 
+                     limits = c(0, 5000)) +
+  theme_classic() +
+  theme(legend.position = c(0.10, 0.95),
+        legend.text = element_text(size = 9),
+        legend.title = element_text(size = 9),
+        legend.key.size = unit(0.3, "cm"),
+        aspect.ratio = 1/2)
+
+```
+
+
+
+
+
+## save figures
+```{r}
+
+library(gridExtra)
+
+# combine the plots
+Metagene_bin <- grid.arrange(Metagene_bin_3group, Metagene_bin_2group,nrow = 2)
+
+Metagene_bin
+
+# Save the plot as a PDF file
+ggsave("output/Step04.Metagene_bin_3group_2group.pdf", plot = Metagene_bin, device = "pdf", width = 8, height = 6)
+
+```
+
+
+
+# pull out the genes in the significant bins (4, 5, 12)
+
+
+
+```{r}
+
+load(file = "output/Step02.TranscriptID_Geneid_Genename.rdata")
+
+# the function definition for metagene_coord
+metagene <- function(file_path, prefix) {
+  # read the data
+  data <- read.delim(file_path, header = TRUE)
+  
+  # Determine longest length transcript for each gene
+  trx_len <- data$utr5_size + data$cds_size + data$utr3_size # Determine transcript length
+  temp <- data.frame(data$gene_name, data$refseqID, trx_len)
+  colnames(temp) <- c("gene_name", "gid", "trx_len") 
+  temp.df <- temp[order(temp$gene_name, temp$gid, -temp$trx_len),]
+  temp.df <- temp[!duplicated(temp$gene_name),]
+  
+  # limit m6a data to one transcript per gene (longest)
+  data <- data[data$refseqID %in% temp.df$gid,]
+  
+  utr5.SF <- median(data$utr5_size, na.rm = TRUE)/median(data$cds_size, na.rm = TRUE)
+  utr3.SF <- median(data$utr3_size, na.rm = TRUE)/median(data$cds_size, na.rm = TRUE)
+  
+  # assign the regions to new dataframes
+  utr5.data <- data[data$rel_location < 1, ]
+  cds.data <- data [data$rel_location < 2 & data$rel_location >= 1, ]
+  utr3.data <- data[data$rel_location >= 2, ]
+  
+  # rescale 5'UTR and 3'UTR
+  library(scales)
+  utr5.data$rel_location <- rescale(utr5.data$rel_location, to = c(1-utr5.SF, 1), from = c(0,1))
+  utr3.data$rel_location <- rescale(utr3.data$rel_location, to = c(2, 2+utr3.SF), from = c(2,3))
+  
+  # Combine and return the metagene.coord
+  metagene <- rbind(utr5.data, cds.data, utr3.data) %>%
+    dplyr::select(c(1:5)) %>%
+    filter(rel_location >= 0.75 & rel_location < 1 |
+           rel_location >= 1.00 & rel_location < 1.25 |
+           rel_location >= 2.75 & rel_location <= 3) %>% 
+    left_join(Geneid_TranscriptID, by = c("refseqID"="TranscriptID"))
+  
+  
+  
+  breaks <- seq(0, 3, by = 0.25)
+
+# Add the "bins" column based on "metagene.cord" values
+  metagene$bins <- cut(metagene$rel_location, breaks = breaks, labels = FALSE, right = FALSE)
+  
+  metagene <- metagene %>%
+    dplyr::select(bins, Geneid, gene_name) %>%
+    distinct() %>%
+    rename(meta_bin = bins,
+           !!paste0(prefix, "_Genename") := "gene_name",
+           ) 
+
+  return(metagene)
+}
+
+
+
+
+
+
+
+
+
+library(ggplot2)
+# get metagene
+SCR_Rep1.metagene <- metagene("data/annot_SCR_Rep1.confidence0.5.2sites.dist.measures.txt", "SCR_Rep1")
+SCR_Rep2.metagene <- metagene("data/annot_SCR_Rep2.confidence0.5.2sites.dist.measures.txt", "SCR_Rep2")
+SCR_Rep3.metagene <- metagene("data/annot_SCR_Rep3.confidence0.5.2sites.dist.measures.txt", "SCR_Rep3")
+
+shRNA33_Rep1.metagene <- metagene("data/annot_shRNA33_Rep1.confidence0.5.2sites.dist.measures.txt", "shRNA33_Rep1")
+shRNA33_Rep2.metagene <- metagene("data/annot_shRNA33_Rep2.confidence0.5.2sites.dist.measures.txt", "shRNA33_Rep2")
+shRNA33_Rep3.metagene <- metagene("data/annot_shRNA33_Rep3.confidence0.5.2sites.dist.measures.txt", "shRNA33_Rep3")
+
+shRNA37_Rep1.metagene <- metagene("data/annot_shRNA37_Rep1.confidence0.5.2sites.dist.measures.txt", "shRNA37_Rep1")
+shRNA37_Rep2.metagene <- metagene("data/annot_shRNA37_Rep2.confidence0.5.2sites.dist.measures.txt", "shRNA37_Rep2")
+shRNA37_Rep3.metagene <- metagene("data/annot_shRNA37_Rep3.confidence0.5.2sites.dist.measures.txt", "shRNA37_Rep3")
+
+
+
+
+dfs <- list(SCR_Rep1.metagene, SCR_Rep2.metagene, SCR_Rep3.metagene, shRNA33_Rep1.metagene, shRNA33_Rep2.metagene, shRNA33_Rep3.metagene, shRNA37_Rep1.metagene, shRNA37_Rep2.metagene, shRNA37_Rep3.metagene)
+
+
+meta_gene <- reduce(dfs, full_join, by=c("meta_bin", "Geneid"))
+
+
+# save as excel
+library(openxlsx)
+
+# Create a new workbook
+wb <- createWorkbook()
+
+## C2U_QC
+addWorksheet(wb, "meta_gene")
+writeData(wb, "meta_gene", meta_gene)
+# Save the workbook to a file
+saveWorkbook(wb, "output/Step04.Metagene_bin_significant_genes.xlsx", overwrite = TRUE)
+ 
+
+
+gene_meta_bin <- meta_gene %>% 
+  dplyr::select(Geneid, meta_bin) %>%
+  distinct()
+
+
+
+
+save(gene_meta_bin, file = "output/Step04.gene_meta_bin.rdata")
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+## 3 SCR samples
+
+```{r}
+library(ggplot2)
+
+# metagen plot
+metagene.cord <- c(SCR_Rep1.metagene.coord, SCR_Rep2.metagene.coord,SCR_Rep3.metagene.coord
+                   )
+mod <- c(rep("SCR_Rep1", length(SCR_Rep1.metagene.coord)), 
+         rep("SCR_Rep2", length(SCR_Rep2.metagene.coord)), 
+         rep("SCR_Rep3", length(SCR_Rep3.metagene.coord))
+         ) 
+
+df <- data.frame(metagene.cord, mod)
+
+# install.packages("ggsci")
+library(ggsci)
+
+# Define vector of color codes for the nine lines
+colors <- c(gray(0.8), gray(0.5), gray(0.1))
+
+
+ ggplot(df) + geom_density(aes(x = metagene.cord, colour = mod)) + xlim(0, 3) + 
+  scale_color_manual(values = colors) + 
+  theme_bw() + 
+  geom_vline(xintercept = 1:2, col = "grey")
+
+
+ 
+
+
+ ggplot(df, aes(x = metagene.cord, colour = mod)) +
+  geom_freqpoly(binwidth = 0.05) +
+  geom_vline(xintercept = 1:2, col = "grey") +
+  xlim(0, 3) +
+  scale_color_manual(values = colors) +
+  theme_bw()
+ 
+
+
+
+```
+
+
+
+
+
+```{r}
+library(ggplot2)
+
+# metagen plot
+metagene.cord <- c(SCR_Rep1.metagene.coord, SCR_Rep2.metagene.coord,SCR_Rep3.metagene.coord
+                   )
+mod <- c(rep("SCR_Rep1", length(SCR_Rep1.metagene.coord)), 
+         rep("SCR_Rep2", length(SCR_Rep2.metagene.coord)), 
+         rep("SCR_Rep3", length(SCR_Rep3.metagene.coord))
+         ) 
+
+df <- data.frame(metagene.cord, mod)
+
+# install.packages("ggsci")
+library(ggsci)
+
+# Define vector of color codes for the nine lines
+colors <- c(gray(0.1), "red", "blue")
+
+
+ ggplot(df) + geom_density(aes(x = metagene.cord, colour = mod)) + xlim(0, 3) + 
+  scale_color_manual(values = colors) + 
+  theme_bw() + 
+  geom_vline(xintercept = 1:2, col = "grey")
+
+
+ 
+
+
+ ggplot(df, aes(x = metagene.cord, colour = mod)) +
+  geom_freqpoly(binwidth = 0.05) +
+  geom_vline(xintercept = 1:2, col = "grey") +
+  xlim(0, 3) +
+  scale_color_manual(values = colors) +
+  theme_bw()
+ 
+
+
+
+```
+
+
+
+
+

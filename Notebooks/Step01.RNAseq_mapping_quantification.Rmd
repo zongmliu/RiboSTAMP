@@ -1,0 +1,295 @@
+---
+title: "Step01.RNAseq_mapping_quantification"
+author: "Vu Lab"
+date: "2023-05-02"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+# 0. Ribo-STAMP background
+
+## server
+zongmin@cedar.computecanada.ca
+
+## Running jobs
+https://docs.alliancecan.ca/wiki/Running_jobs
+
+## paper
+Robust single-cell discovery of RNA targets of RNA-binding proteins and ribosomes
+https://www.nature.com/articles/s41592-021-01128-0#Sec10
+
+### Software for Accurately Identifying Locations Of RNA-editing (SAILOR)
+
+https://github.com/YeoLab/sailor
+
+It requires a BAM-formatted file of the sequence alignments, a FASTA-formatted reference genome sequence (of any organism or cell-type), and a BED3-formatted file of known SNPs. SAILOR allows the user to specify a range of filtering criteria including: Non A-to-I mismatch rate, location of mismatches (to account for biases at the end of reads), and a minimum read coverage required to call variants. Users may relax any of these filtering criteria and/or pursue analysis of A-to-I editing sites with lower confidence scores.
+
+Note: You should check whether your aligner provides the MD tag, as this is necessary to determine the non A/G mismatches between the reference and query.
+
+## sample info
+
+CNOT3_KD_MOLM13
+human, bulk RNA-seq
+
+SCR_Rep1
+SCR_Rep2
+SCR_Rep3
+
+shRNA33_Rep1
+shRNA33_Rep2
+shRNA33_Rep3
+
+shRNA37_Rep1
+shRNA37_Rep2
+shRNA37_Rep3
+
+
+# 1. RNAseq rawdata QC and mapping
+
+## fastp
+fastp: an ultra-fast all-in-one FASTQ preprocessor
+https://academic.oup.com/bioinformatics/article/34/17/i884/5093234
+https://github.com/OpenGene/fastp
+
+fastp as an ultra-fast FASTQ preprocessor with useful quality control and data-filtering features. It can perform quality control, adapter trimming, quality filtering, per-read quality pruning and many other operations with a single scan of the FASTQ data. This tool is developed in C++ and has multi-threading support. Based on our evaluation, fastp is 2–5 times faster than other FASTQ preprocessing tools such as Trimmomatic or Cutadapt despite performing far more operations than similar tools.
+
+### Install fastp
+
+```
+# download the latest build
+wget http://opengene.org/fastp/fastp
+chmod a+x ./fastp
+
+# add path to environment
+vim ~/.bashrc
+export PATH="/home/yilinliu/scratch/software/fastp:$PATH"
+source ~/.bashrc
+
+# check usage
+/home/yilinliu/scratch/software/fastp --help
+
+
+```
+
+### run fastp
+
+ls *.fastq.gz > sample.lst
+
+awk '{print "/home/yilinliu/scratch/software/fastp -i raw_data/"$0".R1.fastq.gz -I raw_data/"$0".R2.fastq.gz -o clean_data/"$0".R1.fastq.gz -O clean_data/"$0".R2.fastq.gz -h fastp_html_json/"$0".html -j fastp_html_json/"$0".json"}' sample.lst > fastp.sh
+
+$ sbatch fastp.sh
+
+```
+#!/bin/bash
+#SBATCH -c 8
+#SBATCH --mem=60G
+#SBATCH -t 0-24:00:00
+
+/home/zongmin/scratch/software/fastp -i raw_data/SCR_Rep1.R1.fastq.gz -I raw_data/SCR_Rep1.R2.fastq.gz -o clean_data/SCR_Rep1.R1.fastq.gz -O clean_data/SCR_Rep1.R2.fastq.gz -h fastp_html_json/SCR_Rep1.html -j fastp_html_json/SCR_Rep1.json
+/home/zongmin/scratch/software/fastp -i raw_data/SCR_Rep2.R1.fastq.gz -I raw_data/SCR_Rep2.R2.fastq.gz -o clean_data/SCR_Rep2.R1.fastq.gz -O clean_data/SCR_Rep2.R2.fastq.gz -h fastp_html_json/SCR_Rep2.html -j fastp_html_json/SCR_Rep2.json
+/home/zongmin/scratch/software/fastp -i raw_data/SCR_Rep3.R1.fastq.gz -I raw_data/SCR_Rep3.R2.fastq.gz -o clean_data/SCR_Rep3.R1.fastq.gz -O clean_data/SCR_Rep3.R2.fastq.gz -h fastp_html_json/SCR_Rep3.html -j fastp_html_json/SCR_Rep3.json
+/home/zongmin/scratch/software/fastp -i raw_data/shRNA33_Rep1.R1.fastq.gz -I raw_data/shRNA33_Rep1.R2.fastq.gz -o clean_data/shRNA33_Rep1.R1.fastq.gz -O clean_data/shRNA33_Rep1.R2.fastq.gz -h fastp_html_json/shRNA33_Rep1.html -j fastp_html_json/shRNA33_Rep1.json
+/home/zongmin/scratch/software/fastp -i raw_data/shRNA33_Rep2.R1.fastq.gz -I raw_data/shRNA33_Rep2.R2.fastq.gz -o clean_data/shRNA33_Rep2.R1.fastq.gz -O clean_data/shRNA33_Rep2.R2.fastq.gz -h fastp_html_json/shRNA33_Rep2.html -j fastp_html_json/shRNA33_Rep2.json
+/home/zongmin/scratch/software/fastp -i raw_data/shRNA33_Rep3.R1.fastq.gz -I raw_data/shRNA33_Rep3.R2.fastq.gz -o clean_data/shRNA33_Rep3.R1.fastq.gz -O clean_data/shRNA33_Rep3.R2.fastq.gz -h fastp_html_json/shRNA33_Rep3.html -j fastp_html_json/shRNA33_Rep3.json
+/home/zongmin/scratch/software/fastp -i raw_data/shRNA37_Rep1.R1.fastq.gz -I raw_data/shRNA37_Rep1.R2.fastq.gz -o clean_data/shRNA37_Rep1.R1.fastq.gz -O clean_data/shRNA37_Rep1.R2.fastq.gz -h fastp_html_json/shRNA37_Rep1.html -j fastp_html_json/shRNA37_Rep1.json
+/home/zongmin/scratch/software/fastp -i raw_data/shRNA37_Rep2.R1.fastq.gz -I raw_data/shRNA37_Rep2.R2.fastq.gz -o clean_data/shRNA37_Rep2.R1.fastq.gz -O clean_data/shRNA37_Rep2.R2.fastq.gz -h fastp_html_json/shRNA37_Rep2.html -j fastp_html_json/shRNA37_Rep2.json
+/home/zongmin/scratch/software/fastp -i raw_data/shRNA37_Rep3.R1.fastq.gz -I raw_data/shRNA37_Rep3.R2.fastq.gz -o clean_data/shRNA37_Rep3.R1.fastq.gz -O clean_data/shRNA37_Rep3.R2.fastq.gz -h fastp_html_json/shRNA37_Rep3.html -j fastp_html_json/shRNA37_Rep3.json
+
+
+
+```
+
+## reference
+
+Download reference genome, gtf, genes, protein files from ensemble
+
+```
+# homo_sapiens
+# genome sequence ﬁle
+wget https://ftp.ensembl.org/pub/release-109/fasta/homo_sapiens/dna/Homo_sapiens.GRCh38.dna.primary_assembly.fa.gz
+
+
+# annotations GTF ﬁle
+wget https://ftp.ensembl.org/pub/release-109/gtf/homo_sapiens/Homo_sapiens.GRCh38.109.gtf.gz
+
+# pep protein file
+wget https://ftp.ensembl.org/pub/release-109/fasta/homo_sapiens/pep/Homo_sapiens.GRCh38.pep.all.fa.gz
+
+gunzip *.gz
+mv Homo_sapiens.GRCh38.dna.primary_assembly.fa genome.fasta
+mv Homo_sapiens.GRCh38.109.gtf genes.gtf
+mv Homo_sapiens.GRCh38.pep.all.fa genes.pep.fasta
+
+```
+
+
+
+
+
+
+## mapping (using STAR)
+
+### Install STAR
+https://github.com/alexdobin/STAR
+
+```
+# Get latest STAR source from releases
+wget https://github.com/alexdobin/STAR/archive/2.7.10b.tar.gz
+tar -xzf 2.7.10b.tar.gz
+cd STAR-2.7.10b
+
+# Compile
+cd source
+make STAR
+
+# add path to environment
+vim ~/.bashrc
+export PATH="//home/zongmin/scratch/software/STAR-2.7.10b/source:$PATH"
+source ~/.bashrc
+
+# check usage
+STAR --help
+
+
+
+```
+
+### basic workflow to get sorted BAM file
+
+
+$ vi index.sh
+
+$ sbatch index.sh
+
+
+```
+#!/bin/bash
+#SBATCH -c 8
+#SBATCH --mem=60G
+#SBATCH -t 0-24:00:00
+
+cd /home/zongmin/scratch/Ribostamp/clean_data
+gunzip *.gz
+
+
+# Generating genome indexes ﬁles
+cd /home/zongmin/scratch/Ribostamp/ref
+
+STAR --runThreadN 8 --runMode genomeGenerate --genomeDir /home/zongmin/scratch/Ribostamp/ref --genomeFastaFiles /home/zongmin/scratch/Ribostamp/ref/genome.fasta --sjdbGTFfile /home/zongmin/scratch/Ribostamp/ref/genes.gtf --sjdbOverhang 100
+
+
+```
+
+
+
+
+### mapping generate sorted BAM
+
+$ awk '{print "STAR --runThreadN 10 --genomeDir /home/zongmin/scratch/Ribostamp/ref --readFilesIn /home/zongmin/scratch/Ribostamp/clean_data/"$0".R1.fastq /home/zongmin/scratch/Ribostamp/clean_data/"$0".R2.fastq --outSAMtype BAM SortedByCoordinate --outSAMattributes NH HI AS nM NM MD --outFileNamePrefix "$0}' ../sample.lst
+
+
+$ vi SCR_mapping.sh
+```
+#!/bin/bash
+#SBATCH -c 10
+#SBATCH --mem=100G
+#SBATCH -t 0-24:00:00
+
+STAR --runThreadN 10 --genomeDir /home/zongmin/scratch/Ribostamp/ref --readFilesIn /home/zongmin/scratch/Ribostamp/clean_data/SCR_Rep1.R1.fastq /home/zongmin/scratch/Ribostamp/clean_data/SCR_Rep1.R2.fastq --outSAMtype BAM SortedByCoordinate --outSAMattributes NH HI AS nM NM MD --outFileNamePrefix SCR_Rep1
+STAR --runThreadN 10 --genomeDir /home/zongmin/scratch/Ribostamp/ref --readFilesIn /home/zongmin/scratch/Ribostamp/clean_data/SCR_Rep2.R1.fastq /home/zongmin/scratch/Ribostamp/clean_data/SCR_Rep2.R2.fastq --outSAMtype BAM SortedByCoordinate --outSAMattributes NH HI AS nM NM MD --outFileNamePrefix SCR_Rep2
+STAR --runThreadN 10 --genomeDir /home/zongmin/scratch/Ribostamp/ref --readFilesIn /home/zongmin/scratch/Ribostamp/clean_data/SCR_Rep3.R1.fastq /home/zongmin/scratch/Ribostamp/clean_data/SCR_Rep3.R2.fastq --outSAMtype BAM SortedByCoordinate --outSAMattributes NH HI AS nM NM MD --outFileNamePrefix SCR_Rep3
+
+
+```
+
+
+$ vi shRNA33_mapping.sh
+```
+#!/bin/bash
+#SBATCH -c 10
+#SBATCH --mem=100G
+#SBATCH -t 0-24:00:00
+
+
+STAR --runThreadN 10 --genomeDir /home/zongmin/scratch/Ribostamp/ref --readFilesIn /home/zongmin/scratch/Ribostamp/clean_data/shRNA33_Rep1.R1.fastq /home/zongmin/scratch/Ribostamp/clean_data/shRNA33_Rep1.R2.fastq --outSAMtype BAM SortedByCoordinate --outSAMattributes NH HI AS nM NM MD --outFileNamePrefix shRNA33_Rep1
+STAR --runThreadN 10 --genomeDir /home/zongmin/scratch/Ribostamp/ref --readFilesIn /home/zongmin/scratch/Ribostamp/clean_data/shRNA33_Rep2.R1.fastq /home/zongmin/scratch/Ribostamp/clean_data/shRNA33_Rep2.R2.fastq --outSAMtype BAM SortedByCoordinate --outSAMattributes NH HI AS nM NM MD --outFileNamePrefix shRNA33_Rep2
+STAR --runThreadN 10 --genomeDir /home/zongmin/scratch/Ribostamp/ref --readFilesIn /home/zongmin/scratch/Ribostamp/clean_data/shRNA33_Rep3.R1.fastq /home/zongmin/scratch/Ribostamp/clean_data/shRNA33_Rep3.R2.fastq --outSAMtype BAM SortedByCoordinate --outSAMattributes NH HI AS nM NM MD --outFileNamePrefix shRNA33_Rep3
+
+
+
+```
+
+
+$ vi shRNA37_mapping.sh
+```
+#!/bin/bash
+#SBATCH -c 10
+#SBATCH --mem=100G
+#SBATCH -t 0-24:00:00
+
+
+
+STAR --runThreadN 10 --genomeDir /home/zongmin/scratch/Ribostamp/ref --readFilesIn /home/zongmin/scratch/Ribostamp/clean_data/shRNA37_Rep1.R1.fastq /home/zongmin/scratch/Ribostamp/clean_data/shRNA37_Rep1.R2.fastq --outSAMtype BAM SortedByCoordinate --outSAMattributes NH HI AS nM NM MD --outFileNamePrefix shRNA37_Rep1
+STAR --runThreadN 10 --genomeDir /home/zongmin/scratch/Ribostamp/ref --readFilesIn /home/zongmin/scratch/Ribostamp/clean_data/shRNA37_Rep2.R1.fastq /home/zongmin/scratch/Ribostamp/clean_data/shRNA37_Rep2.R2.fastq --outSAMtype BAM SortedByCoordinate --outSAMattributes NH HI AS nM NM MD --outFileNamePrefix shRNA37_Rep2
+STAR --runThreadN 10 --genomeDir /home/zongmin/scratch/Ribostamp/ref --readFilesIn /home/zongmin/scratch/Ribostamp/clean_data/shRNA37_Rep3.R1.fastq /home/zongmin/scratch/Ribostamp/clean_data/shRNA37_Rep3.R2.fastq --outSAMtype BAM SortedByCoordinate --outSAMattributes NH HI AS nM NM MD --outFileNamePrefix shRNA37_Rep3
+
+
+```
+
+
+### change bam file name
+
+```
+for file in *Aligned.sortedByCoord.out.bam; do mv "$file" "${file/Aligned.sortedByCoord.out.bam/.bam}"; done
+
+```
+
+use samtools vie bam file
+
+$ module load samtools/1.10   StdEnv/2020
+$ samtools view SCR_Rep1.bam | less -S
+
+
+
+
+# 2. RNAseq different expression genes  
+
+## BAM file to quantification-->count  
+
+
+https://subread.sourceforge.net/
+https://subread.sourceforge.net/featureCounts.html
+
+Summarize multiple paired-end datasets:
+featureCounts -p --countReadPairs -t exon -g gene_id -a annotation.gtf -o counts.txt library1.bam library2.bam library3.bam
+
+Citation
+Liao Y, Smyth GK and Shi W (2014). featureCounts: an efficient general purpose program for assigning sequence reads to genomic features. Bioinformatics, 30(7):923-30.
+
+
+featureCounts is part of the subread conda package
+
+$ conda install -c bioconda subread
+$ featureCounts -p --countReadPairs -a ../ref/genes.gtf -o ../Count/count.out -T 8 *.bam
+
+
+$ vi featureCounts.sh
+```
+#!/bin/bash
+#SBATCH --mem=60G
+#SBATCH -c 8
+#SBATCH -t 0-24:00:00
+
+cd /home/zongmin/scratch/Ribostamp/BAM
+
+featureCounts -p --countReadPairs -a ../ref/genes.gtf -o ../Count/count.out -T 8 *.bam
+
+```
+
+
+
+
+

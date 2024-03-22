@@ -1,0 +1,1829 @@
+
+---
+title: "Step03.C2U_QC_0.5confidence_site2sample"
+author: "Vu Lab"
+output: html_document
+date: "2023-05-03"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# C2U QC
+
+keep sites with confidence score >= 0.5, and should exist at two sample
+
+## sites with confidence score >= 0.5
+
+```{r}
+library(tidyverse)
+
+# load data
+load(file = "output/Step02.C2U.rdata")
+
+
+## sites with confidence score >= 0.5
+
+confidence_score <- function(sample, prefix) {
+  # Generate the column name
+  column_name <- paste0(prefix, "_score")
+  # Filter the rows based on the column name
+  sample <- sample %>% 
+    filter(!!sym(column_name) >= 0.5)
+  
+  return(sample)
+}
+
+SCR_Rep1 <- confidence_score(SCR_Rep1, "SCR_Rep1")
+SCR_Rep2 <- confidence_score(SCR_Rep2, "SCR_Rep2")
+SCR_Rep3 <- confidence_score(SCR_Rep3, "SCR_Rep3")
+
+shRNA33_Rep1 <- confidence_score(shRNA33_Rep1, "shRNA33_Rep1")
+shRNA33_Rep2 <- confidence_score(shRNA33_Rep2, "shRNA33_Rep2")
+shRNA33_Rep3 <- confidence_score(shRNA33_Rep3, "shRNA33_Rep3")
+
+shRNA37_Rep1 <- confidence_score(shRNA37_Rep1, "shRNA37_Rep1")
+shRNA37_Rep2 <- confidence_score(shRNA37_Rep2, "shRNA37_Rep2")
+shRNA37_Rep3 <- confidence_score(shRNA37_Rep3, "shRNA37_Rep3")
+
+
+
+```
+
+
+
+## select the overlap sites at least two samples from each group
+
+```{r}
+# select the overlap sites at least two samples from each group
+# SCR
+SCR_Rep1_sites <- SCR_Rep1 %>%
+  dplyr::select(start) %>%
+  distinct() 
+
+SCR_Rep2_sites <- SCR_Rep2 %>%
+  dplyr::select(start) %>%
+  distinct() 
+
+
+SCR_Rep3_sites <- SCR_Rep3 %>%
+  dplyr::select(start) %>%
+  distinct()
+
+
+# Combine all three dataframes and count the occurrences of each 'start' value
+combined_sites <- bind_rows(SCR_Rep1_sites, SCR_Rep2_sites, SCR_Rep3_sites) %>%
+  group_by(start) %>%
+  summarize(count = n())
+
+# Filter the combined_sites dataframe to keep only the rows with a count of at least 2
+SCR_site_list <- combined_sites %>%
+  filter(count >= 2) %>%
+  select(-count)  # Remove the 'count' column, keeping only the 'start' column
+
+
+
+
+# shRNA33
+shRNA33_Rep1_sites <- shRNA33_Rep1 %>%
+  dplyr::select(start) %>%
+  distinct() 
+
+shRNA33_Rep2_sites <- shRNA33_Rep2 %>%
+  dplyr::select(start) %>%
+  distinct() 
+
+
+shRNA33_Rep3_sites <- shRNA33_Rep3 %>%
+  dplyr::select(start) %>%
+  distinct()
+
+
+# Combine all three dataframes and count the occurrences of each 'start' value
+combined_sites <- bind_rows(shRNA33_Rep1_sites, shRNA33_Rep2_sites, shRNA33_Rep3_sites) %>%
+  group_by(start) %>%
+  summarize(count = n())
+
+# Filter the combined_sites dataframe to keep only the rows with a count of at least 2
+shRNA33_site_list <- combined_sites %>%
+  filter(count >= 2) %>%
+  select(-count)  # Remove the 'count' column, keeping only the 'start' column
+
+
+
+# shRNA37
+shRNA37_Rep1_sites <- shRNA37_Rep1 %>%
+  dplyr::select(start) %>%
+  distinct() 
+
+shRNA37_Rep2_sites <- shRNA37_Rep2 %>%
+  dplyr::select(start) %>%
+  distinct() 
+
+
+shRNA37_Rep3_sites <- shRNA37_Rep3 %>%
+  dplyr::select(start) %>%
+  distinct()
+
+
+# Combine all three dataframes and count the occurrences of each 'start' value
+combined_sites <- bind_rows(shRNA37_Rep1_sites, shRNA37_Rep2_sites, shRNA37_Rep3_sites) %>%
+  group_by(start) %>%
+  summarize(count = n())
+
+# Filter the combined_sites dataframe to keep only the rows with a count of at least 2
+shRNA37_site_list <- combined_sites %>%
+  filter(count >= 2) %>%
+  select(-count)  # Remove the 'count' column, keeping only the 'start' column
+
+
+
+
+
+
+## site_list 
+
+site_list <- function(sample, site_list) {
+  sample <- sample %>%
+    filter(start %in% site_list$start) 
+  
+  return(sample)
+}
+
+SCR_Rep1 <- site_list(SCR_Rep1, SCR_site_list)
+SCR_Rep2 <- site_list(SCR_Rep2, SCR_site_list)
+SCR_Rep3 <- site_list(SCR_Rep3, SCR_site_list)
+
+shRNA33_Rep1 <- site_list(shRNA33_Rep1, shRNA33_site_list)
+shRNA33_Rep2 <- site_list(shRNA33_Rep2, shRNA33_site_list)
+shRNA33_Rep3 <- site_list(shRNA33_Rep3, shRNA33_site_list)
+
+shRNA37_Rep1 <- site_list(shRNA37_Rep1, shRNA37_site_list)
+shRNA37_Rep2 <- site_list(shRNA37_Rep2, shRNA37_site_list)
+shRNA37_Rep3 <- site_list(shRNA37_Rep3, shRNA37_site_list)
+
+
+
+write.table(SCR_site_list, file = "output/site_list/SCR_site_list.txt", sep = "\t", row.names = FALSE, quote = FALSE)
+write.table(shRNA33_site_list, file = "output/site_list/shRNA33_site_list.txt", sep = "\t", row.names = FALSE, quote = FALSE)
+write.table(shRNA37_site_list, file = "output/site_list/shRNA37_site_list.txt", sep = "\t", row.names = FALSE, quote = FALSE)
+
+
+
+
+
+```
+
+## save C2U_QC results
+
+```{r}
+
+dfs <- list(SCR_Rep1, SCR_Rep2, SCR_Rep3, shRNA33_Rep1, shRNA33_Rep2, shRNA33_Rep3, shRNA37_Rep1, shRNA37_Rep2, shRNA37_Rep3)
+
+
+C2U_QC <- reduce(dfs, full_join, by=c("chr", "start", "end", "Geneid", "Genename", "biotype", "strand", "variant"))
+
+# save as excel
+library(openxlsx)
+
+# Create a new workbook
+wb <- createWorkbook()
+
+## C2U_QC
+addWorksheet(wb, "C2U_QC")
+writeData(wb, "C2U_QC", C2U_QC)
+# Save the workbook to a file
+saveWorkbook(wb, "output/Step03.C2U_QC.xlsx", overwrite = TRUE)
+
+
+
+save(C2U_QC, SCR_Rep1, SCR_Rep2, SCR_Rep3, shRNA33_Rep1, shRNA33_Rep2, shRNA33_Rep3,shRNA37_Rep1, shRNA37_Rep2, shRNA37_Rep3, file = "output/Step03.C2U_QC.rdata")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+# piechart of % of distribution 5' vs. CDS vs. 3' vs. intron after QC
+
+```{r}
+library(tidyverse)
+load(file = "output/Step03.C2U_QC.rdata")
+
+
+library(dplyr)
+
+# Assuming SCR_Rep1 is your data frame containing 'start' and 'biotype' columns
+SCR_Rep1_biotype_nsites <- SCR_Rep1 %>%
+  dplyr::select(start, biotype) %>%
+  distinct() %>%
+  group_by(biotype) %>%
+  summarise(n_distinct_start = n_distinct(start)) %>%
+  rename(SCR_Rep1 = n_distinct_start)
+
+SCR_Rep2_biotype_nsites <- SCR_Rep2 %>%
+  dplyr::select(start, biotype) %>%
+  distinct() %>%
+  group_by(biotype) %>%
+  summarise(n_distinct_start = n_distinct(start)) %>%
+  rename(SCR_Rep2 = n_distinct_start)
+
+SCR_Rep3_biotype_nsites <- SCR_Rep3 %>%
+  dplyr::select(start, biotype) %>%
+  distinct() %>%
+  group_by(biotype) %>%
+  summarise(n_distinct_start = n_distinct(start)) %>%
+  rename(SCR_Rep3 = n_distinct_start)
+
+
+
+shRNA33_Rep1_biotype_nsites <- shRNA33_Rep1 %>%
+  dplyr::select(start, biotype) %>%
+  distinct() %>%
+  group_by(biotype) %>%
+  summarise(n_distinct_start = n_distinct(start)) %>%
+  rename(shRNA33_Rep1 = n_distinct_start)
+
+shRNA33_Rep2_biotype_nsites <- shRNA33_Rep2 %>%
+  dplyr::select(start, biotype) %>%
+  distinct() %>%
+  group_by(biotype) %>%
+  summarise(n_distinct_start = n_distinct(start)) %>%
+  rename(shRNA33_Rep2 = n_distinct_start)
+
+shRNA33_Rep3_biotype_nsites <- shRNA33_Rep3 %>%
+  dplyr::select(start, biotype) %>%
+  distinct() %>%
+  group_by(biotype) %>%
+  summarise(n_distinct_start = n_distinct(start)) %>%
+  rename(shRNA33_Rep3 = n_distinct_start)
+
+
+
+shRNA37_Rep1_biotype_nsites <- shRNA37_Rep1 %>%
+  dplyr::select(start, biotype) %>%
+  distinct() %>%
+  group_by(biotype) %>%
+  summarise(n_distinct_start = n_distinct(start)) %>%
+  rename(shRNA37_Rep1 = n_distinct_start)
+
+shRNA37_Rep2_biotype_nsites <- shRNA37_Rep2 %>%
+  dplyr::select(start, biotype) %>%
+  distinct() %>%
+  group_by(biotype) %>%
+  summarise(n_distinct_start = n_distinct(start)) %>%
+  rename(shRNA37_Rep2 = n_distinct_start)
+
+shRNA37_Rep3_biotype_nsites <- shRNA37_Rep3 %>%
+  dplyr::select(start, biotype) %>%
+  distinct() %>%
+  group_by(biotype) %>%
+  summarise(n_distinct_start = n_distinct(start)) %>%
+  rename(shRNA37_Rep3 = n_distinct_start)
+
+
+
+
+
+library(dplyr)
+library(tidyr)
+
+# Sequentially join the 9 tables
+combined_data <- SCR_Rep1_biotype_nsites %>%
+  left_join(SCR_Rep2_biotype_nsites, by = "biotype") %>%
+  left_join(SCR_Rep3_biotype_nsites, by = "biotype") %>%
+  left_join(shRNA33_Rep1_biotype_nsites, by = "biotype") %>%
+  left_join(shRNA33_Rep2_biotype_nsites, by = "biotype") %>%
+  left_join(shRNA33_Rep3_biotype_nsites, by = "biotype") %>%
+  left_join(shRNA37_Rep1_biotype_nsites, by = "biotype") %>%
+  left_join(shRNA37_Rep2_biotype_nsites, by = "biotype") %>%
+  left_join(shRNA37_Rep3_biotype_nsites, by = "biotype")
+
+
+print(combined_data)
+# Convert the wide data format into a long data format
+long_data <- combined_data %>%
+  gather(key = "sample", value = "nsites", -biotype)
+
+print(long_data)
+
+
+library(dplyr)
+library(ggplot2)
+
+# Calculate the total number of sites for each sample
+total_sites_by_sample <- long_data %>%
+  group_by(sample) %>%
+  summarise(total_sites = sum(nsites))
+
+# Calculate the percentage of sites for each biotype and sample
+long_data_percentage <- long_data %>%
+  left_join(total_sites_by_sample, by = "sample") %>%
+  mutate(percentage = (nsites / total_sites) * 100) %>%
+  select(biotype, percentage, sample) %>%
+  mutate(biotype = factor(biotype, levels = c("five_prime_utr", "intron", "CDS", "three_prime_utr")))
+
+# Create a bar plot to visualize the distribution
+ggplot(long_data_percentage, aes(x = sample, y = percentage, fill = biotype)) +
+  geom_bar(stat = "identity", position = "stack") +
+  theme_minimal() +
+  labs(x = "Sample", y = "Percentage", title = "Distribution of Biotypes after QC") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+
+## display the 9 pie charts with sample labels but without the color legend
+
+
+library(dplyr)
+library(ggplot2)
+library(ggpubr)
+
+# Calculate the total number of sites for each sample
+total_sites_by_sample <- long_data %>%
+  group_by(sample) %>%
+  summarise(total_sites = sum(nsites))
+
+# Calculate the percentage of sites for each biotype and sample
+long_data_percentage <- long_data %>%
+  left_join(total_sites_by_sample, by = "sample") %>%
+  mutate(percentage = (nsites / total_sites) * 100) %>%
+  select(biotype, percentage, sample)
+
+# Create a pie chart for each sample with sample labels and without color legend
+pie_charts <- lapply(unique(long_data_percentage$sample), function(sample_name) {
+  sample_data <- long_data_percentage %>%
+    filter(sample == sample_name)
+  
+  pie_chart <- ggplot(sample_data, aes(x = "", y = percentage, fill = biotype)) +
+    geom_bar(width = 1, stat = "identity") +
+    coord_polar("y", start = 0) +
+    theme_void() +
+    theme(legend.position = "none") + # Remove the color legend
+    labs(title = sample_name, fill = NULL) # Keep the sample label
+  
+  return(pie_chart)
+})
+
+# Combine the pie charts using ggarrange from the ggpubr package
+combined_pie_charts <- ggarrange(plotlist = pie_charts, ncol = 3, nrow = 3)
+
+# Print the combined pie charts with sample labels and without color legend
+print(combined_pie_charts)
+
+
+
+
+
+save(long_data, file = "output/Step03.biotype_long_data.rdata")
+
+```
+
+
+
+
+# Total edit number between control vs. KD 
+
+we want to know if control vs KD has global difference
+
+
+
+## intron + 5'UTR + CDS + 3'UTR
+### control, KD-33, KD-37
+```{r}
+load(file = "output/Step03.biotype_long_data.rdata")
+
+library(tidyverse)
+library(rstatix)
+library(ggpubr)
+library(ggplot2)
+biotype4_3group <- long_data %>%
+  filter(biotype %in% c("intron", "five_prime_utr", "CDS", "three_prime_utr")) %>%
+  mutate(
+    biotype4 = "5'UTR+Intron+CDS+3'UTR",
+    sample_group = case_when(
+      grepl("SCR", sample) ~ "SCR",
+      grepl("shRNA33", sample) ~ "shRNA33",
+      grepl("shRNA37", sample) ~ "shRNA37"
+    )) %>%
+  group_by(sample, biotype4) %>%
+  mutate(nsites_sum = sum(nsites)) %>%
+  ungroup() %>%
+  dplyr::select(sample_group, biotype4,nsites_sum) %>%
+  distinct()
+
+
+# Calculate the standard error (se) values
+se_data <- biotype4_3group %>%
+  group_by(sample_group) %>%
+  summarize(mean_nsites = mean(nsites_sum),
+            se = sd(nsites_sum) / sqrt(n()))
+
+# Merge the standard error data with the main data frame
+biotype4_3group <- merge(biotype4_3group, se_data, by = c("sample_group"))
+
+# Perform pairwise Wilcoxon rank-sum tests
+pairwise_comparisons <- biotype4_3group %>%
+  pairwise_wilcox_test(nsites_sum ~ sample_group, p.adjust.method = "bonferroni")
+
+
+print(pairwise_comparisons)
+
+# save as excel
+library(openxlsx)
+
+# Create a new workbook
+wb <- createWorkbook()
+
+# Add the data frames as sheets to the workbook
+## sheet1
+addWorksheet(wb, "biotype4_3group")
+writeData(wb, "biotype4_3group", biotype4_3group)
+
+## sheet2
+addWorksheet(wb, "pairwise_comparisons")
+writeData(wb, "pairwise_comparisons", pairwise_comparisons)
+
+
+# Save the workbook to a file
+saveWorkbook(wb, "output/Step03.biotype4_3group_totalEdit.xlsx", overwrite = TRUE)
+
+
+
+
+color_values <- c("#C1C0C0", "#76D7FF", "#1796FF")
+# Plot with error bars
+biotype4_3group_edits <- ggplot(biotype4_3group, aes(x = biotype4, y = mean_nsites, fill = sample_group)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.8), color = "black", width = 0.6) +
+  geom_errorbar(aes(ymin = mean_nsites - se, ymax = mean_nsites + se), width = 0.4, position = position_dodge(width = 0.8), color = "black", show.legend = FALSE) +
+  labs(x = NULL, y = "Edits (confidence ≥ 0.5)") +
+  scale_y_continuous(expand = c(0, 0),
+                     breaks = seq(0, 25000, by = 5000),
+                     limits = c(0, 25000)) +
+  scale_fill_manual(values = color_values,
+                    labels = c("control", "KD-33", "KD-37"),
+                    name = "") +
+  theme_classic() +
+  theme(legend.position = c(0.15, 0.95),
+        legend.text = element_text(size = 9),
+        legend.title = element_text(size = 9),
+        legend.key.size = unit(0.3, "cm"),
+        aspect.ratio = 1/1)
+
+
+```
+
+### control, KD
+```{r}
+load(file = "output/Step03.biotype_long_data.rdata")
+
+library(tidyverse)
+library(rstatix)
+library(ggpubr)
+library(ggplot2)
+biotype4_2group <- long_data %>% 
+  filter(biotype %in% c("intron", "five_prime_utr", "CDS", "three_prime_utr")) %>%
+  mutate(
+    biotype4 = "5'UTR+Intron+CDS+3'UTR",
+    sample_group = case_when(
+      grepl("SCR", sample) ~ "SCR",
+      grepl("shRNA33", sample) ~ "shRNA",
+      grepl("shRNA37", sample) ~ "shRNA"
+    ))%>%
+  group_by(sample, biotype4) %>%
+  mutate(nsites_sum = sum(nsites)) %>%
+  ungroup() %>%
+  dplyr::select(sample_group, biotype4,nsites_sum) %>%
+  distinct()
+
+
+# Calculate the standard error (se) values
+se_data <- biotype4_2group %>%
+  group_by(sample_group) %>%
+  summarize(mean_nsites = mean(nsites_sum),
+            se = sd(nsites_sum) / sqrt(n()))
+
+# Merge the standard error data with the main data frame
+biotype4_2group <- merge(biotype4_2group, se_data, by = c("sample_group"))
+
+# Perform pairwise Wilcoxon rank-sum tests
+pairwise_comparisons <- biotype4_2group %>%
+  pairwise_wilcox_test(nsites_sum ~ sample_group, p.adjust.method = "bonferroni", pool.sd = FALSE)
+
+
+print(pairwise_comparisons)
+
+# save as excel
+library(openxlsx)
+
+# Create a new workbook
+wb <- createWorkbook()
+
+# Add the data frames as sheets to the workbook
+## sheet1
+addWorksheet(wb, "biotype4_2group")
+writeData(wb, "biotype4_2group", biotype4_2group)
+
+## sheet2
+addWorksheet(wb, "pairwise_comparisons")
+writeData(wb, "pairwise_comparisons", pairwise_comparisons)
+
+
+# Save the workbook to a file
+saveWorkbook(wb, "output/Step03.biotype4_2group_totalEdit.xlsx", overwrite = TRUE)
+
+
+
+
+color_values <- c("#C1C0C0", "#1796FF")
+# Plot with error bars
+biotype4_2group_edits <- ggplot(biotype4_2group, aes(x = biotype4, y = mean_nsites, fill = sample_group)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.8), color = "black", width = 0.6) +
+  geom_errorbar(aes(ymin = mean_nsites - se, ymax = mean_nsites + se), width = 0.4, position = position_dodge(width = 0.8), color = "black", show.legend = FALSE) +
+  labs(x = NULL, y = "Edits (confidence ≥ 0.5)") +
+  scale_y_continuous(expand = c(0, 0),
+                     breaks = seq(0, 25000, by = 5000),
+                     limits = c(0, 25000)) +
+  scale_fill_manual(values = color_values,
+                    labels = c("control", "KD"),
+                    name = "") +
+  theme_classic() +
+  theme(legend.position = c(0.15, 0.95),
+        legend.text = element_text(size = 9),
+        legend.title = element_text(size = 9),
+        legend.key.size = unit(0.3, "cm"),
+        aspect.ratio = 1/1)
+
+
+```
+
+
+
+## 5'UTR + CDS + 3'UTR
+### control, KD-33, KD-37
+```{r}
+load(file = "output/Step03.biotype_long_data.rdata")
+
+library(tidyverse)
+library(rstatix)
+library(ggpubr)
+library(ggplot2)
+biotype3_3group <- long_data %>%
+  filter(biotype %in% c( "five_prime_utr", "CDS", "three_prime_utr")) %>%
+  mutate(
+    biotype3 = "5'UTR+CDS+3'UTR",
+    sample_group = case_when(
+      grepl("SCR", sample) ~ "SCR",
+      grepl("shRNA33", sample) ~ "shRNA33",
+      grepl("shRNA37", sample) ~ "shRNA37"
+    )) %>%
+  group_by(sample, biotype3) %>%
+  mutate(nsites_sum = sum(nsites)) %>%
+  ungroup() %>%
+  dplyr::select(sample_group, biotype3,nsites_sum) %>%
+  distinct()
+
+
+# Calculate the standard error (se) values
+se_data <- biotype3_3group %>%
+  group_by(sample_group) %>%
+  summarize(mean_nsites = mean(nsites_sum),
+            se = sd(nsites_sum) / sqrt(n()))
+
+# Merge the standard error data with the main data frame
+biotype3_3group <- merge(biotype3_3group, se_data, by = c("sample_group"))
+
+# Perform pairwise Wilcoxon rank-sum tests
+pairwise_comparisons <- biotype3_3group %>%
+  pairwise_wilcox_test(nsites_sum ~ sample_group, p.adjust.method = "bonferroni")
+
+
+print(pairwise_comparisons)
+
+# save as excel
+library(openxlsx)
+
+# Create a new workbook
+wb <- createWorkbook()
+
+# Add the data frames as sheets to the workbook
+## sheet1
+addWorksheet(wb, "biotype3_3group")
+writeData(wb, "biotype3_3group", biotype3_3group)
+
+## sheet2
+addWorksheet(wb, "pairwise_comparisons")
+writeData(wb, "pairwise_comparisons", pairwise_comparisons)
+
+
+# Save the workbook to a file
+saveWorkbook(wb, "output/Step03.biotype3_3group_totalEdit.xlsx", overwrite = TRUE)
+
+
+
+
+color_values <- c("#C1C0C0", "#76D7FF", "#1796FF")
+# Plot with error bars
+biotype3_3group_edits <- ggplot(biotype3_3group, aes(x = biotype3, y = mean_nsites, fill = sample_group)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.8), color = "black", width = 0.6) +
+  geom_errorbar(aes(ymin = mean_nsites - se, ymax = mean_nsites + se), width = 0.4, position = position_dodge(width = 0.8), color = "black", show.legend = FALSE) +
+  labs(x = NULL, y = "Edits (confidence ≥ 0.5)") +
+  scale_y_continuous(expand = c(0, 0),
+                     breaks = seq(0, 25000, by = 5000),
+                     limits = c(0, 25000)) +
+  scale_fill_manual(values = color_values,
+                    labels = c("control", "KD-33", "KD-37"),
+                    name = "") +
+  theme_classic() +
+  theme(legend.position = c(0.15, 0.95),
+        legend.text = element_text(size = 9),
+        legend.title = element_text(size = 9),
+        legend.key.size = unit(0.3, "cm"),
+        aspect.ratio = 1/1)
+
+
+```
+
+### control, KD
+```{r}
+load(file = "output/Step03.biotype_long_data.rdata")
+
+library(tidyverse)
+library(rstatix)
+library(ggpubr)
+library(ggplot2)
+biotype3_2group <- long_data %>% 
+  filter(biotype %in% c( "five_prime_utr", "CDS", "three_prime_utr")) %>%
+  mutate(
+    biotype3 = "5'UTR+CDS+3'UTR",
+    sample_group = case_when(
+      grepl("SCR", sample) ~ "SCR",
+      grepl("shRNA33", sample) ~ "shRNA",
+      grepl("shRNA37", sample) ~ "shRNA"
+    ))%>%
+  group_by(sample, biotype3) %>%
+  mutate(nsites_sum = sum(nsites)) %>%
+  ungroup() %>%
+  dplyr::select(sample_group, biotype3,nsites_sum) %>%
+  distinct()
+
+
+# Calculate the standard error (se) values
+se_data <- biotype3_2group %>%
+  group_by(sample_group) %>%
+  summarize(mean_nsites = mean(nsites_sum),
+            se = sd(nsites_sum) / sqrt(n()))
+
+# Merge the standard error data with the main data frame
+biotype3_2group <- merge(biotype3_2group, se_data, by = c("sample_group"))
+
+# Perform pairwise Wilcoxon rank-sum tests
+pairwise_comparisons <- biotype3_2group %>%
+  pairwise_wilcox_test(nsites_sum ~ sample_group, p.adjust.method = "bonferroni", pool.sd = FALSE)
+
+
+print(pairwise_comparisons)
+
+# save as excel
+library(openxlsx)
+
+# Create a new workbook
+wb <- createWorkbook()
+
+# Add the data frames as sheets to the workbook
+## sheet1
+addWorksheet(wb, "biotype3_2group")
+writeData(wb, "biotype3_2group", biotype3_2group)
+
+## sheet2
+addWorksheet(wb, "pairwise_comparisons")
+writeData(wb, "pairwise_comparisons", pairwise_comparisons)
+
+
+# Save the workbook to a file
+saveWorkbook(wb, "output/Step03.biotype3_2group_totalEdit.xlsx", overwrite = TRUE)
+
+
+
+
+color_values <- c("#C1C0C0", "#1796FF")
+# Plot with error bars
+biotype3_2group_edits <- ggplot(biotype3_2group, aes(x = biotype3, y = mean_nsites, fill = sample_group)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.8), color = "black", width = 0.6) +
+  geom_errorbar(aes(ymin = mean_nsites - se, ymax = mean_nsites + se), width = 0.4, position = position_dodge(width = 0.8), color = "black", show.legend = FALSE) +
+  labs(x = NULL, y = "Edits (confidence ≥ 0.5)") +
+  scale_y_continuous(expand = c(0, 0),
+                     breaks = seq(0, 25000, by = 5000),
+                     limits = c(0, 25000)) +
+  scale_fill_manual(values = color_values,
+                    labels = c("control", "KD"),
+                    name = "") +
+  theme_classic() +
+  theme(legend.position = c(0.15, 0.95),
+        legend.text = element_text(size = 9),
+        legend.title = element_text(size = 9),
+        legend.key.size = unit(0.3, "cm"),
+        aspect.ratio = 1/1)
+
+
+```
+
+
+
+
+## CDS + 3'UTR
+### control, KD-33, KD-37
+```{r}
+load(file = "output/Step03.biotype_long_data.rdata")
+
+library(tidyverse)
+library(rstatix)
+library(ggpubr)
+library(ggplot2)
+biotype2_3group <- long_data %>%
+  filter(biotype %in% c("CDS", "three_prime_utr")) %>%
+  mutate(
+    biotype2 = "CDS+3'UTR",
+    sample_group = case_when(
+      grepl("SCR", sample) ~ "SCR",
+      grepl("shRNA33", sample) ~ "shRNA33",
+      grepl("shRNA37", sample) ~ "shRNA37"
+    )) %>%
+  group_by(sample, biotype2) %>%
+  mutate(nsites_sum = sum(nsites)) %>%
+  ungroup() %>%
+  dplyr::select(sample_group, biotype2,nsites_sum) %>%
+  distinct()
+
+
+# Calculate the standard error (se) values
+se_data <- biotype2_3group %>%
+  group_by(sample_group) %>%
+  summarize(mean_nsites = mean(nsites_sum),
+            se = sd(nsites_sum) / sqrt(n()))
+
+# Merge the standard error data with the main data frame
+biotype2_3group <- merge(biotype2_3group, se_data, by = c("sample_group"))
+
+# Perform pairwise Wilcoxon rank-sum tests
+pairwise_comparisons <- biotype2_3group %>%
+  pairwise_wilcox_test(nsites_sum ~ sample_group, p.adjust.method = "bonferroni")
+
+
+print(pairwise_comparisons)
+
+# save as excel
+library(openxlsx)
+
+# Create a new workbook
+wb <- createWorkbook()
+
+# Add the data frames as sheets to the workbook
+## sheet1
+addWorksheet(wb, "biotype2_3group")
+writeData(wb, "biotype2_3group", biotype2_3group)
+
+## sheet2
+addWorksheet(wb, "pairwise_comparisons")
+writeData(wb, "pairwise_comparisons", pairwise_comparisons)
+
+
+# Save the workbook to a file
+saveWorkbook(wb, "output/Step03.biotype2_3group_totalEdit.xlsx", overwrite = TRUE)
+
+
+
+
+color_values <- c("#C1C0C0", "#76D7FF", "#1796FF")
+# Plot with error bars
+biotype2_3group_edits <- ggplot(biotype2_3group, aes(x = biotype2, y = mean_nsites, fill = sample_group)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.8), color = "black", width = 0.6) +
+  geom_errorbar(aes(ymin = mean_nsites - se, ymax = mean_nsites + se), width = 0.4, position = position_dodge(width = 0.8), color = "black", show.legend = FALSE) +
+  labs(x = NULL, y = "Edits (confidence ≥ 0.5)") +
+  scale_y_continuous(expand = c(0, 0),
+                     breaks = seq(0, 25000, by = 5000),
+                     limits = c(0, 25000)) +
+  scale_fill_manual(values = color_values,
+                    labels = c("control", "KD-33", "KD-37"),
+                    name = "") +
+  theme_classic() +
+  theme(legend.position = c(0.15, 0.95),
+        legend.text = element_text(size = 9),
+        legend.title = element_text(size = 9),
+        legend.key.size = unit(0.3, "cm"),
+        aspect.ratio = 1/1)
+
+
+```
+
+### control, KD
+```{r}
+load(file = "output/Step03.biotype_long_data.rdata")
+
+library(tidyverse)
+library(rstatix)
+library(ggpubr)
+library(ggplot2)
+biotype2_2group <- long_data %>% 
+  filter(biotype %in% c("CDS", "three_prime_utr")) %>%
+  mutate(
+    biotype2 = "CDS+3'UTR",
+    sample_group = case_when(
+      grepl("SCR", sample) ~ "SCR",
+      grepl("shRNA33", sample) ~ "shRNA",
+      grepl("shRNA37", sample) ~ "shRNA"
+    ))%>%
+  group_by(sample, biotype2) %>%
+  mutate(nsites_sum = sum(nsites)) %>%
+  ungroup() %>%
+  dplyr::select(sample_group, biotype2,nsites_sum) %>%
+  distinct()
+
+
+# Calculate the standard error (se) values
+se_data <- biotype2_2group %>%
+  group_by(sample_group) %>%
+  summarize(mean_nsites = mean(nsites_sum),
+            se = sd(nsites_sum) / sqrt(n()))
+
+# Merge the standard error data with the main data frame
+biotype2_2group <- merge(biotype2_2group, se_data, by = c("sample_group"))
+
+# Perform pairwise Wilcoxon rank-sum tests
+pairwise_comparisons <- biotype2_2group %>%
+  pairwise_wilcox_test(nsites_sum ~ sample_group, p.adjust.method = "bonferroni", pool.sd = FALSE)
+
+
+print(pairwise_comparisons)
+
+# save as excel
+library(openxlsx)
+
+# Create a new workbook
+wb <- createWorkbook()
+
+# Add the data frames as sheets to the workbook
+## sheet1
+addWorksheet(wb, "biotype2_2group")
+writeData(wb, "biotype2_2group", biotype2_2group)
+
+## sheet2
+addWorksheet(wb, "pairwise_comparisons")
+writeData(wb, "pairwise_comparisons", pairwise_comparisons)
+
+
+# Save the workbook to a file
+saveWorkbook(wb, "output/Step03.biotype2_2group_totalEdit.xlsx", overwrite = TRUE)
+
+
+
+
+color_values <- c("#C1C0C0", "#1796FF")
+# Plot with error bars
+biotype2_2group_edits <- ggplot(biotype2_2group, aes(x = biotype2, y = mean_nsites, fill = sample_group)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.8), color = "black", width = 0.6) +
+  geom_errorbar(aes(ymin = mean_nsites - se, ymax = mean_nsites + se), width = 0.4, position = position_dodge(width = 0.8), color = "black", show.legend = FALSE) +
+  labs(x = NULL, y = "Edits (confidence ≥ 0.5)") +
+  scale_y_continuous(expand = c(0, 0),
+                     breaks = seq(0, 25000, by = 5000),
+                     limits = c(0, 25000)) +
+  scale_fill_manual(values = color_values,
+                    labels = c("control", "KD"),
+                    name = "") +
+  theme_classic() +
+  theme(legend.position = c(0.15, 0.95),
+        legend.text = element_text(size = 9),
+        legend.title = element_text(size = 9),
+        legend.key.size = unit(0.3, "cm"),
+        aspect.ratio = 1/1)
+
+
+```
+
+
+
+
+
+
+## save figures
+```{r}
+
+
+ggsave("output/Step03.biotype_totalEdits.pdf", plot = biotype_totalEdits, device = "pdf", width = 14, height = 10)
+```
+
+
+
+
+# veiw different mRNA feature to see if any significant changes
+```{r}
+load(file = "output/Step03.biotype_long_data.rdata")
+```
+
+## biotype_nsites_3group
+
+```{r}
+
+library(dplyr)
+biotype_nsites_3group <- long_data %>% 
+  mutate(sample_group = case_when(
+    grepl("SCR", sample) ~ "SCR",
+    grepl("shRNA33", sample) ~ "shRNA33",
+    grepl("shRNA37", sample) ~ "shRNA37"
+  )) %>%
+  mutate(biotype = factor(biotype, levels = c("five_prime_utr", "intron", "CDS", "three_prime_utr")))
+
+
+
+# Calculate the standard error (se) values
+se_data <- biotype_nsites_3group %>%
+  group_by(biotype, sample_group) %>%
+  summarize(mean_nsites = mean(nsites),
+            se = sd(nsites) / sqrt(n()))
+
+# Merge the standard error data with the main data frame
+biotype_nsites_3group <- merge(biotype_nsites_3group, se_data, by = c("biotype", "sample_group"))
+
+# Calculate the average EPKM value for each sample group in each bin
+average_nsites <- biotype_nsites_3group %>%
+  group_by(biotype, sample_group) %>%
+  summarize(mean_nsites = mean(nsites),
+            median_nsites = median(nsites),
+            .groups = "drop")
+
+
+
+
+# save as excel
+library(openxlsx)
+
+# Create a new workbook
+wb <- createWorkbook()
+
+# Add the data frames as sheets to the workbook
+## sheet1
+addWorksheet(wb, "biotype_nsites_3group")
+writeData(wb, "biotype_nsites_3group", biotype_nsites_3group)
+
+
+## sheet2
+addWorksheet(wb, "average_nsites")
+writeData(wb, "average_nsites", average_nsites)
+
+# Save the workbook to a file
+saveWorkbook(wb, "output/Step03.C2U_QC_biotype_3groups.xlsx", overwrite = TRUE)
+
+
+
+
+color_values <- c("#C1C0C0", "#76D7FF", "#1796FF")
+# Plot with error bars
+biotype_distribution_3group <- ggplot(biotype_nsites_3group, aes(x = biotype, y = mean_nsites, fill = sample_group)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.8), color = "black", width = 0.6) +
+  geom_errorbar(aes(ymin = mean_nsites - se, ymax = mean_nsites + se), width = 0.4, position = position_dodge(width = 0.8), color = "black", show.legend = FALSE) +
+  labs(x = NULL, y = "Edits (confidence ≥ 0.5)") +
+  scale_x_discrete(limits = c("five_prime_utr", "intron", "CDS", "three_prime_utr"),
+                   breaks = c("five_prime_utr", "intron", "CDS", "three_prime_utr"),
+                   labels = c("5' UTR", "Intron", "CDS", "3' UTR")) +
+  scale_y_continuous(expand = c(0, 0),
+                     breaks = seq(0, 12000, by = 2000),
+                     limits = c(0, 12000)) +
+  scale_fill_manual(values = color_values,
+                    labels = c("Control", "KD-33", "KD-37"),
+                    name = "") +
+  theme_classic() +
+  theme(legend.position = c(0.15, 0.90),
+        legend.text = element_text(size = 9),
+        legend.title = element_text(size = 9),
+        legend.key.size = unit(0.3, "cm"),
+        aspect.ratio = 1/1)
+
+
+
+
+# Save the plot as a PDF file
+ggsave("output/Ste03.biotype_distribution_3group.pdf", plot = biotype_distribution_3group, device = "pdf", width = 8, height = 6)
+
+
+
+
+## statistic 
+data <- biotype_nsites_3group
+
+# Create a subset of the data for each biotype
+cds_data <- subset(data, biotype == "CDS")
+five_prime_utr_data <- subset(data, biotype == "five_prime_utr")
+intron_data <- subset(data, biotype == "intron")
+three_prime_utr_data <- subset(data, biotype == "three_prime_utr")
+
+# Perform pairwise tests for each biotype
+pairwise_cds <- pairwise.t.test(cds_data$nsites, cds_data$sample_group, p.adjust.method = "bonferroni")
+pairwise_five_prime_utr <- pairwise.t.test(five_prime_utr_data$nsites, five_prime_utr_data$sample_group, p.adjust.method = "bonferroni")
+pairwise_intron <- pairwise.t.test(intron_data$nsites, intron_data$sample_group, p.adjust.method = "bonferroni")
+pairwise_three_prime_utr <- pairwise.t.test(three_prime_utr_data$nsites, three_prime_utr_data$sample_group, p.adjust.method = "bonferroni")
+
+# Print the significant comparisons for each biotype
+print(pairwise_cds)
+print(pairwise_five_prime_utr)
+print(pairwise_intron)
+print(pairwise_three_prime_utr)
+
+
+
+
+
+color1 <- rgb(193, 192, 192, maxColorValue = 255)
+color2 <- rgb(118, 215, 255, maxColorValue = 255)
+color3 <- rgb(23, 150, 255, maxColorValue = 255)
+
+# Print the ggplot colors
+print(color1)
+print(color2)
+print(color3)
+
+
+```
+
+## biotype_nsites_2group
+
+```{r}
+
+library(dplyr)
+library(ggplot2)
+biotype_nsites_2group <- long_data %>% 
+  mutate(sample_group = case_when(
+    grepl("SCR", sample) ~ "SCR",
+    grepl("shRNA33|shRNA37", sample) ~ "shRNA"
+  )) %>%
+  mutate(biotype = factor(biotype, levels = c("five_prime_utr", "intron", "CDS", "three_prime_utr")))
+
+
+
+# Calculate the standard error (se) values
+se_data <- biotype_nsites_2group %>%
+  group_by(biotype, sample_group) %>%
+  summarize(mean_nsites = mean(nsites),
+            se = sd(nsites) / sqrt(n()))
+
+# Merge the standard error data with the main data frame
+biotype_nsites_2group <- merge(biotype_nsites_2group, se_data, by = c("biotype", "sample_group"))
+
+
+
+# Calculate the average EPKM value for each sample group in each bin
+average_nsites <- biotype_nsites_2group %>%
+  group_by(biotype, sample_group) %>%
+  summarize(mean_nsites = mean(nsites),
+            median_nsites = median(nsites),
+            .groups = "drop")
+
+
+
+
+# save as excel
+library(openxlsx)
+
+# Create a new workbook
+wb <- createWorkbook()
+
+# Add the data frames as sheets to the workbook
+## sheet1
+addWorksheet(wb, "biotype_nsites_2group")
+writeData(wb, "biotype_nsites_2group", biotype_nsites_2group)
+
+
+## sheet2
+addWorksheet(wb, "average_nsites")
+writeData(wb, "average_nsites", average_nsites)
+
+# Save the workbook to a file
+saveWorkbook(wb, "output/Step03.C2U_QC_biotype_2groups.xlsx", overwrite = TRUE)
+
+
+
+
+
+color_values <- c("#A8A8A8", "#1796FF")
+# Plot with error bars
+biotype_distribution_2group <- ggplot(biotype_nsites_2group, aes(x = biotype, y = mean_nsites, fill = sample_group)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.8), color = "black", width = 0.6) +
+  geom_errorbar(aes(ymin = mean_nsites - se, ymax = mean_nsites + se), width = 0.4, position = position_dodge(width = 0.8), color = "black", show.legend = FALSE) +
+  labs(x = NULL, y = "Edits (confidence ≥ 0.5)") +
+  scale_x_discrete(limits = c("five_prime_utr", "intron", "CDS", "three_prime_utr"),
+                   breaks = c("five_prime_utr", "intron", "CDS", "three_prime_utr"),
+                   labels = c("5' UTR", "Intron", "CDS", "3' UTR")) +
+  scale_y_continuous(expand = c(0, 0),
+                     breaks = seq(0, 12000, by = 2000),
+                     limits = c(0, 12000)) +
+  scale_fill_manual(values = color_values,
+                    labels = c("Control", "KD"),
+                    name = "") +
+  theme_classic() +
+  theme(legend.position = c(0.15, 0.90),
+        legend.text = element_text(size = 9),
+        legend.title = element_text(size = 9),
+        legend.key.size = unit(0.3, "cm"),
+        aspect.ratio = 1/1)
+
+
+# Save the plot as a PDF file
+ggsave("output/Ste03.biotype_distribution_2group.pdf", plot = biotype_distribution_2group, device = "pdf", width = 8, height = 6)
+
+
+## statistic 
+data <- biotype_nsites_2group
+
+# Create a subset of the data for each biotype
+cds_data <- subset(data, biotype == "CDS")
+five_prime_utr_data <- subset(data, biotype == "five_prime_utr")
+intron_data <- subset(data, biotype == "intron")
+three_prime_utr_data <- subset(data, biotype == "three_prime_utr")
+
+# Perform pairwise tests for each biotype using Welch's t-test
+pairwise_cds <- pairwise.t.test(cds_data$nsites, cds_data$sample_group, p.adjust.method = "bonferroni", pool.sd = FALSE)
+pairwise_five_prime_utr <- pairwise.t.test(five_prime_utr_data$nsites, five_prime_utr_data$sample_group, p.adjust.method = "bonferroni", pool.sd = FALSE)
+pairwise_intron <- pairwise.t.test(intron_data$nsites, intron_data$sample_group, p.adjust.method = "bonferroni", pool.sd = FALSE)
+pairwise_three_prime_utr <- pairwise.t.test(three_prime_utr_data$nsites, three_prime_utr_data$sample_group, p.adjust.method = "bonferroni", pool.sd = FALSE)
+
+# Print the significant comparisons for each biotype
+print(pairwise_cds)
+print(pairwise_five_prime_utr)
+print(pairwise_intron)
+print(pairwise_three_prime_utr)
+
+
+
+
+
+
+```
+
+
+
+## save figures
+```{r}
+library(gridExtra)
+biotype_distribution <- grid.arrange(biotype_distribution_3group, biotype_distribution_2group, nrow = 1)
+
+ggsave("output/Ste03.biotype_distribution.pdf", plot = biotype_distribution, device = "pdf", width = 8, height = 6)
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# edits vs genes
+want to know each group gene edits distribution
+```{r}
+library(tidyverse)
+load(file = "output/Step03.C2U_QC.rdata")
+
+# SCR
+SCR_Rep1_edits <- SCR_Rep1 %>%
+  filter(biotype %in% c("CDS", "three_prime_utr")) %>%
+  dplyr::select(start,Geneid) %>%
+  group_by(Geneid) %>%
+  count() %>%
+  rename(SCR_Rep1 = n)
+
+SCR_Rep2_edits <- SCR_Rep2 %>%
+  filter(biotype %in% c("CDS", "three_prime_utr")) %>%
+  dplyr::select(start,Geneid) %>%
+  group_by(Geneid) %>%
+  count() %>%
+  rename(SCR_Rep2 = n)
+
+SCR_Rep3_edits <- SCR_Rep3 %>%
+  filter(biotype %in% c("CDS", "three_prime_utr")) %>%
+  dplyr::select(start,Geneid) %>%
+  group_by(Geneid) %>%
+  count() %>%
+  rename(SCR_Rep3 = n)
+
+
+# shRNA33
+shRNA33_Rep1_edits <- shRNA33_Rep1 %>%
+  filter(biotype %in% c("CDS", "three_prime_utr")) %>%
+  dplyr::select(start,Geneid) %>%
+  group_by(Geneid) %>%
+  count() %>%
+  rename(shRNA33_Rep1 = n)
+
+shRNA33_Rep2_edits <- shRNA33_Rep2 %>%
+  filter(biotype %in% c("CDS", "three_prime_utr")) %>%
+  dplyr::select(start,Geneid) %>%
+  group_by(Geneid) %>%
+  count() %>%
+  rename(shRNA33_Rep2 = n)
+
+shRNA33_Rep3_edits <- shRNA33_Rep3 %>%
+  filter(biotype %in% c("CDS", "three_prime_utr")) %>%
+  dplyr::select(start,Geneid) %>%
+  group_by(Geneid) %>%
+  count() %>%
+  rename(shRNA33_Rep3 = n)
+
+# shRNA37
+shRNA37_Rep1_edits <- shRNA37_Rep1 %>%
+  filter(biotype %in% c("CDS", "three_prime_utr")) %>%
+  dplyr::select(start,Geneid) %>%
+  group_by(Geneid) %>%
+  count() %>%
+  rename(shRNA37_Rep1 = n)
+
+shRNA37_Rep2_edits <- shRNA37_Rep2 %>%
+  filter(biotype %in% c("CDS", "three_prime_utr")) %>%
+  dplyr::select(start,Geneid) %>%
+  group_by(Geneid) %>%
+  count() %>%
+  rename(shRNA37_Rep2 = n)
+
+shRNA37_Rep3_edits <- shRNA37_Rep3 %>%
+  filter(biotype %in% c("CDS", "three_prime_utr")) %>%
+  dplyr::select(start,Geneid) %>%
+  group_by(Geneid) %>%
+  count() %>%
+  rename(shRNA37_Rep3 = n)
+
+
+dfs <- list(SCR_Rep1_edits, SCR_Rep2_edits, SCR_Rep3_edits, shRNA33_Rep1_edits, shRNA33_Rep2_edits, shRNA33_Rep3_edits, shRNA37_Rep1_edits, shRNA37_Rep2_edits, shRNA37_Rep3_edits)
+
+
+gene_edits <- reduce(dfs, full_join, by= "Geneid") %>%
+  ungroup() %>% 
+  mutate_all(~ ifelse(is.na(.), 0, .)) %>%
+  mutate(SCR = (SCR_Rep1 + SCR_Rep2 + SCR_Rep3) / 3,
+         shRNA33 = (shRNA33_Rep1 + shRNA33_Rep2 + shRNA33_Rep3) / 3,
+         shRNA37 = (shRNA37_Rep1 + shRNA37_Rep2 + shRNA37_Rep3) / 3
+         ) %>%
+  dplyr::select(-c(2:10)) %>%
+  gather(key = "sample", value = "edits", SCR, shRNA33, shRNA37)
+  
+
+library(ggplot2)
+colors <- c("#C1C0C0", "#76D7FF", "#1796FF")
+
+p1 <- ggplot(gene_edits, aes(x=edits)) +
+  geom_histogram(aes(fill = sample), color = 'black', 
+                 position = position_dodge(width = 0.8),  bins = 100) +
+  labs(x = "# of edits", y = "# of genes", title = "100 bins") +
+  scale_fill_manual(values = colors, 
+                    labels = c("control", "KD-33", "KD-37"),
+                    name = "") +
+  theme_classic() +
+  theme(legend.position = c(0.82, 0.95),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.background = element_rect(fill = "transparent", color = NA),
+        legend.text = element_text(size = 9),
+        legend.title = element_text(size = 9),
+        legend.key.size = unit(0.3, "cm"),
+        aspect.ratio = 1/2)
+
+  
+
+
+colors <- c("#C1C0C0", "#76D7FF", "#1796FF")
+p2 <- ggplot(gene_edits, aes(x = edits)) +
+  geom_density(aes(fill = sample), color = 'black') +
+  scale_x_continuous(expand = c(0, 0),
+                     breaks = seq(0, 100, by = 5),
+                     limits = c(0, 100)) +
+  scale_y_continuous(expand = c(0, 0),
+                     breaks = seq(0, 0.2, by = 0.05),
+                     limits = c(0, 0.2)) +
+  labs(x = "# of edits", y = "Density", title = "") +
+  scale_fill_manual(values = colors,
+                    labels = c("control", "KD-33", "KD-37"),
+                    name = "") +
+  theme_classic() +
+  theme(legend.position = c(0.82, 0.95),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.background = element_rect(fill = "transparent", color = NA),
+        legend.text = element_text(size = 9),
+        legend.title = element_text(size = 9),
+        legend.key.size = unit(0.3, "cm"),
+        aspect.ratio = 1/2)
+
+
+
+
+
+
+
+
+
+
+
+
+```
+
+## from the distribution, we know most gene only has 1-5 edits
+
+```{r}
+# EditBins
+
+## SCR
+SCR_edits <- full_join(SCR_Rep1_edits, SCR_Rep2_edits,by= "Geneid") %>%
+  full_join(SCR_Rep3_edits,by= "Geneid") %>%
+  ungroup() %>%
+    mutate_all(~ ifelse(is.na(.), 0, .)) %>%
+  mutate(edites = (SCR_Rep1 + SCR_Rep2 + SCR_Rep3) / 3 ) %>%
+  mutate(EditBins = case_when(
+    edites <= 0 ~ "0",
+    edites <= 1 ~ "(0,1]",
+    edites <= 2 ~ "(1,2]",
+    edites <= 4 ~ "(2,4]",
+    edites <= 6 ~ "(4,6]",
+    edites <= 8 ~ "(6,8]",
+    edites <= 10 ~ "(8,10]",
+    edites <= 20 ~ "(10,20]",
+    edites <= 100 ~ "(20,100]"
+  )) %>%
+  group_by(EditBins) %>%
+  count() %>%
+  rename(gene = n) %>%
+   mutate(sample = "SCR")
+
+
+
+## shRNA33
+shRNA33_edits <- full_join(shRNA33_Rep1_edits, shRNA33_Rep2_edits,by= "Geneid") %>%
+  full_join(shRNA33_Rep3_edits,by= "Geneid") %>%
+  ungroup() %>%
+    mutate_all(~ ifelse(is.na(.), 0, .)) %>%
+  mutate(edites = (shRNA33_Rep1 + shRNA33_Rep2 + shRNA33_Rep3) / 3 ) %>%
+  mutate(EditBins = case_when(
+    edites <= 0 ~ "0",
+    edites <= 1 ~ "(0,1]",
+    edites <= 2 ~ "(1,2]",
+    edites <= 4 ~ "(2,4]",
+    edites <= 6 ~ "(4,6]",
+    edites <= 8 ~ "(6,8]",
+    edites <= 10 ~ "(8,10]",
+    edites <= 20 ~ "(10,20]",
+    edites <= 100 ~ "(20,100]"
+  )) %>%
+  group_by(EditBins) %>%
+  count() %>%
+  rename(gene = n) %>%
+   mutate(sample = "shRNA33")
+
+
+
+## shRNA37
+shRNA37_edits <- full_join(shRNA37_Rep1_edits, shRNA37_Rep2_edits,by= "Geneid") %>%
+  full_join(shRNA37_Rep3_edits,by= "Geneid") %>%
+  ungroup() %>%
+    mutate_all(~ ifelse(is.na(.), 0, .)) %>%
+  mutate(edites = (shRNA37_Rep1 + shRNA37_Rep2 + shRNA37_Rep3) / 3 ) %>%
+  mutate(EditBins = case_when(
+    edites <= 0 ~ "0",
+    edites <= 1 ~ "(0,1]",
+    edites <= 2 ~ "(1,2]",
+    edites <= 4 ~ "(2,4]",
+    edites <= 6 ~ "(4,6]",
+    edites <= 8 ~ "(6,8]",
+    edites <= 10 ~ "(8,10]",
+    edites <= 20 ~ "(10,20]",
+    edites <= 100 ~ "(20,100]"
+  )) %>%
+  group_by(EditBins) %>%
+  count() %>%
+  rename(gene = n) %>%
+   mutate(sample = "shRNA37")
+
+
+## rbind
+gene_edit_bin <- rbind(SCR_edits, shRNA33_edits, shRNA37_edits) %>%
+  mutate(EditBins = factor(EditBins, levels = c("(0,1]","(1,2]","(2,4]","(4,6]","(6,8]","(8,10]","(10,20]","(20,100]"))) %>%
+  arrange(EditBins)
+
+
+
+
+
+
+
+color_values <- c("#C1C0C0", "#76D7FF", "#1796FF")
+# Plot with error bars
+p3 <- ggplot(gene_edit_bin, aes(x = EditBins, y = gene, fill = sample)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.8), color = "black", width = 0.6) +
+  labs(x = "# of edits", y = "# of genes") +
+  scale_y_continuous(expand = c(0, 0),
+                     breaks = seq(0, 2500, by = 500),
+                     limits = c(0, 2500)) +
+  scale_fill_manual(values = color_values,
+                    labels = c("control", "KD-33", "KD-37"),
+                    name = "") +
+  theme_classic() +
+  theme(legend.position = c(0.85, 0.95),
+        legend.text = element_text(size = 9),
+        legend.title = element_text(size = 9),
+        legend.key.size = unit(0.3, "cm"),
+        aspect.ratio = 1/1)
+```
+
+
+## save
+```{r}
+gene_edits <- reduce(dfs, full_join, by= "Geneid") %>%
+  ungroup() %>% 
+  mutate_all(~ ifelse(is.na(.), 0, .)) %>%
+  mutate(SCR = (SCR_Rep1 + SCR_Rep2 + SCR_Rep3) / 3,
+         shRNA33 = (shRNA33_Rep1 + shRNA33_Rep2 + shRNA33_Rep3) / 3,
+         shRNA37 = (shRNA37_Rep1 + shRNA37_Rep2 + shRNA37_Rep3) / 3
+         ) 
+# save as excel
+library(openxlsx)
+
+# Create a new workbook
+wb <- createWorkbook()
+
+# Add the data frames as sheets to the workbook
+## sheet1
+addWorksheet(wb, "gene_edits")
+writeData(wb, "gene_edits", gene_edits)
+
+## sheet2
+addWorksheet(wb, "gene_edit_bin")
+writeData(wb, "gene_edit_bin", gene_edit_bin)
+
+
+# Save the workbook to a file
+saveWorkbook(wb, "output/Step03.gene_edit_distribution.xlsx", overwrite = TRUE)
+
+
+
+library(gridExtra)
+
+# combine the plots
+gene_edit_distribution <- grid.arrange(p1, p2, p3, nrow = 3)
+
+# Save the plot as a PDF file
+ggsave("output/Step03.gene_edit_distribution.pdf", plot = gene_edit_distribution, device = "pdf", width = 8, height = 12)
+
+```
+
+##
+
+```{r}
+library(tidyverse)
+library(rstatix)
+library(ggpubr)
+library(ggplot2)
+SCR_Rep1_gene_edits <- gene_edits %>%
+  group_by(SCR_Rep1) %>%
+  count() %>%
+  rename(edits = SCR_Rep1,
+         genes = n) %>%
+  mutate(sample = "SCR_Rep1")
+
+SCR_Rep2_gene_edits <- gene_edits %>%
+  group_by(SCR_Rep2) %>%
+  count() %>%
+  rename(edits = SCR_Rep2,
+         genes = n) %>%
+  mutate(sample = "SCR_Rep2")
+
+SCR_Rep3_gene_edits <- gene_edits %>%
+  group_by(SCR_Rep3) %>%
+  count() %>%
+  rename(edits = SCR_Rep3,
+         genes = n) %>%
+  mutate(sample = "SCR_Rep3")
+
+
+
+
+shRNA33_Rep1_gene_edits <- gene_edits %>%
+  group_by(shRNA33_Rep1) %>%
+  count() %>%
+  rename(edits = shRNA33_Rep1,
+         genes = n) %>%
+  mutate(sample = "shRNA33_Rep1")
+
+shRNA33_Rep2_gene_edits <- gene_edits %>%
+  group_by(shRNA33_Rep2) %>%
+  count() %>%
+  rename(edits = shRNA33_Rep2,
+         genes = n) %>%
+  mutate(sample = "shRNA33_Rep2")
+
+shRNA33_Rep3_gene_edits <- gene_edits %>%
+  group_by(shRNA33_Rep3) %>%
+  count() %>%
+  rename(edits = shRNA33_Rep3,
+         genes = n) %>%
+  mutate(sample = "shRNA33_Rep3")
+
+
+shRNA37_Rep1_gene_edits <- gene_edits %>%
+  group_by(shRNA37_Rep1) %>%
+  count() %>%
+  rename(edits = shRNA37_Rep1,
+         genes = n) %>%
+  mutate(sample = "shRNA37_Rep1")
+
+shRNA37_Rep2_gene_edits <- gene_edits %>%
+  group_by(shRNA37_Rep2) %>%
+  count() %>%
+  rename(edits = shRNA37_Rep2,
+         genes = n) %>%
+  mutate(sample = "shRNA37_Rep2")
+
+shRNA37_Rep3_gene_edits <- gene_edits %>%
+  group_by(shRNA37_Rep3) %>%
+  count() %>%
+  rename(edits = shRNA37_Rep3,
+         genes = n) %>%
+  mutate(sample = "shRNA37_Rep3")
+
+
+gene_edits_total <- rbind(SCR_Rep1_gene_edits, SCR_Rep2_gene_edits,SCR_Rep3_gene_edits,shRNA33_Rep1_gene_edits, shRNA33_Rep2_gene_edits,shRNA33_Rep3_gene_edits,shRNA37_Rep1_gene_edits, shRNA37_Rep2_gene_edits,shRNA37_Rep3_gene_edits) %>%
+  mutate(sample_group = case_when(
+      grepl("SCR", sample) ~ "SCR",
+      grepl("shRNA33", sample) ~ "shRNA33",
+      grepl("shRNA37", sample) ~ "shRNA37"
+    ))
+
+
+
+
+# Calculate the standard error (se) values
+se_data <- gene_edits_total %>%
+  group_by(edits, sample_group) %>%
+  summarize(mean_genes = mean(genes),
+            se = sd(genes) / sqrt(n()))
+
+# Merge the standard error data with the main data frame
+gene_edits_total <- merge(gene_edits_total, se_data, by = c("edits","sample_group")) 
+
+# Perform pairwise Wilcoxon rank-sum tests
+pairwise_comparisons <- gene_edits_total %>%
+  pairwise_wilcox_test(edits ~ sample_group, p.adjust.method = "bonferroni", pool.sd = FALSE)
+
+
+print(pairwise_comparisons)
+
+
+
+
+color_values <- c("#C1C0C0", "#76D7FF", "#1796FF")
+# Plot with error bars
+edit10 <- ggplot(gene_edits_total %>% filter(edits <= 10)%>%
+  mutate(edits = factor(edits)), aes(x = edits, y = mean_genes, fill = sample_group)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.8), color = "black", width = 0.6) +
+  geom_errorbar(aes(ymin = mean_genes - se, ymax = mean_genes + se), width = 0.4, position = position_dodge(width = 0.8), color = "black", show.legend = FALSE) +
+  labs(x = "# of edits", y = "# of genes") +
+  scale_y_continuous(expand = c(0, 0),
+                     breaks = seq(0, 3000, by = 500),
+                     limits = c(0, 3000)) +
+  scale_fill_manual(values = color_values,
+                    labels = c("control", "KD-33", "KD-37"),
+                    name = "") +
+  theme_classic() +
+  theme(legend.position = c(0.85, 0.95),
+        legend.text = element_text(size = 9),
+        legend.title = element_text(size = 9),
+        legend.key.size = unit(0.3, "cm"),
+        aspect.ratio = 1/1)
+
+
+
+edit20 <- ggplot(gene_edits_total %>% filter(edits > 10 & edits <= 20)%>%
+  mutate(edits = factor(edits)), aes(x = edits, y = mean_genes, fill = sample_group)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.8), color = "black", width = 0.6) +
+  geom_errorbar(aes(ymin = mean_genes - se, ymax = mean_genes + se), width = 0.4, position = position_dodge(width = 0.8), color = "black", show.legend = FALSE) +
+  labs(x = "# of edits", y = "# of genes") +
+ scale_y_continuous(expand = c(0, 0),
+                     breaks = seq(0, 60, by = 10),
+                     limits = c(0, 60)) +
+  scale_fill_manual(values = color_values,
+                    labels = c("control", "KD-33", "KD-37"),
+                    name = "") +
+  theme_classic() +
+  theme(legend.position = c(0.85, 0.95),
+        legend.text = element_text(size = 9),
+        legend.title = element_text(size = 9),
+        legend.key.size = unit(0.3, "cm"),
+        aspect.ratio = 1/1)
+
+
+edit30 <- ggplot(gene_edits_total %>% filter(edits > 20 & edits <= 30)%>%
+  mutate(edits = factor(edits)), aes(x = edits, y = mean_genes, fill = sample_group)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.8), color = "black", width = 0.6) +
+  geom_errorbar(aes(ymin = mean_genes - se, ymax = mean_genes + se), width = 0.4, position = position_dodge(width = 0.8), color = "black", show.legend = FALSE) +
+  labs(x = "# of edits", y = "# of genes") +
+ scale_y_continuous(expand = c(0, 0),
+                     breaks = seq(0, 15, by = 5),
+                     limits = c(0, 15)) +
+  scale_fill_manual(values = color_values,
+                    labels = c("control", "KD-33", "KD-37"),
+                    name = "") +
+  theme_classic() +
+  theme(legend.position = c(0.85, 0.95),
+        legend.text = element_text(size = 9),
+        legend.title = element_text(size = 9),
+        legend.key.size = unit(0.3, "cm"),
+        aspect.ratio = 1/1)
+
+
+ 
+
+edit40 <- ggplot(gene_edits_total %>% filter(edits > 30 & edits <= 40)%>%
+  mutate(edits = factor(edits)), aes(x = edits, y = mean_genes, fill = sample_group)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.8), color = "black", width = 0.6) +
+  geom_errorbar(aes(ymin = mean_genes - se, ymax = mean_genes + se), width = 0.4, position = position_dodge(width = 0.8), color = "black", show.legend = FALSE) +
+  labs(x = "# of edits", y = "# of genes") +
+ scale_y_continuous(expand = c(0, 0),
+                     breaks = seq(0, 3, by = 1),
+                     limits = c(0, 3)) +
+  scale_fill_manual(values = color_values,
+                    labels = c("control", "KD-33", "KD-37"),
+                    name = "") +
+  theme_classic() +
+  theme(legend.position = c(0.85, 0.95),
+        legend.text = element_text(size = 9),
+        legend.title = element_text(size = 9),
+        legend.key.size = unit(0.3, "cm"),
+        aspect.ratio = 1/1)
+
+
+
+edit50 <- ggplot(gene_edits_total %>% filter(edits > 40)%>%
+  mutate(edits = factor(edits)), aes(x = edits, y = mean_genes, fill = sample_group)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.8), color = "black", width = 0.6) +
+  geom_errorbar(aes(ymin = mean_genes - se, ymax = mean_genes + se), width = 0.4, position = position_dodge(width = 0.8), color = "black", show.legend = FALSE) +
+  labs(x = "# of edits", y = "# of genes") +
+ scale_y_continuous(expand = c(0, 0),
+                     breaks = seq(0, 2, by = 1),
+                     limits = c(0, 2)) +
+  scale_fill_manual(values = color_values,
+                    labels = c("control", "KD-33", "KD-37"),
+                    name = "") +
+  theme_classic() +
+  theme(legend.position = c(0.85, 0.95),
+        legend.text = element_text(size = 9),
+        legend.title = element_text(size = 9),
+        legend.key.size = unit(0.3, "cm"),
+        aspect.ratio = 1/1)
+
+
+
+
+
+
+
+library(gridExtra)
+
+# combine the plots
+gene_edit_distribution2 <- grid.arrange(edit10, edit20, edit30, edit40,edit50, nrow = 3)
+
+# Save the plot as a PDF file
+ggsave("output/Step03.gene_edit_distribution2.pdf", plot = gene_edit_distribution2, device = "pdf", width = 8, height = 16)
+
+
+
+
+# save as excel
+library(openxlsx)
+
+# Create a new workbook
+wb <- createWorkbook()
+
+# Add the data frames as sheets to the workbook
+## sheet1
+addWorksheet(wb, "gene_edits")
+writeData(wb, "gene_edits", gene_edits_total)
+
+
+## sheet2
+addWorksheet(wb, "se_data")
+writeData(wb, "se_data", se_data)
+
+
+
+# Save the workbook to a file
+saveWorkbook(wb, "output/Step03.gene_edit_distribution2.xlsx", overwrite = TRUE)
+
+
+
+```
+
+
+
+#  edit genes and sites of each sample-summary
+
+
+```{r}
+library(dplyr)
+
+load(file = "output/Step03.C2U_QC.rdata")
+
+
+samples_list <- list(SCR_Rep1, SCR_Rep2, SCR_Rep3, 
+                     shRNA33_Rep1, shRNA33_Rep2, shRNA33_Rep3, 
+                     shRNA37_Rep1, shRNA37_Rep2, shRNA37_Rep3)
+
+sample_names <- c("SCR_Rep1", "SCR_Rep2", "SCR_Rep3", 
+                  "shRNA33_Rep1", "shRNA33_Rep2", "shRNA33_Rep3", 
+                  "shRNA37_Rep1", "shRNA37_Rep2", "shRNA37_Rep3")
+
+names(samples_list) <- sample_names
+
+sample_gene_name_ID_sites <- data.frame(sample=character(),
+                                        gene_name_count=numeric(),
+                                        gene_ID_count=numeric(),
+                                        sites_count=numeric(),
+                                        stringsAsFactors=FALSE)
+
+
+# Loop over the samples and calculate the counts
+for (i in 1:length(samples_list)) {
+  sample <- names(samples_list)[i]
+  
+  gene_name_count <- samples_list[[i]] %>%
+    dplyr::select(Genename) %>%
+    distinct() %>%
+    nrow()
+  
+  gene_ID_count <- samples_list[[i]] %>%
+    dplyr::select(Geneid) %>%
+    distinct() %>%
+    nrow()
+  
+  sites_count <- samples_list[[i]] %>%
+    dplyr::select(start) %>%
+    distinct() %>%
+    nrow()
+  
+  # Append the results to the data.frame
+  sample_gene_name_ID_sites <- rbind(sample_gene_name_ID_sites,
+                                     data.frame(sample=sample,
+                                                gene_name_count=gene_name_count,
+                                                gene_ID_count=gene_ID_count,
+                                                sites_count=sites_count))
+}
+
+# Print the final data.frame
+sample_gene_name_ID_sites
+
+
+
+
+# save as excel
+library(openxlsx)
+
+# Create a new workbook
+wb <- createWorkbook()
+
+## sheet1
+addWorksheet(wb, "C2U_QC_biotype")
+writeData(wb, "C2U_QC_biotype", combined_data)
+
+## sample_gene_name_ID_sites
+addWorksheet(wb, "sample_gene_name_ID_sites")
+writeData(wb, "sample_gene_name_ID_sites", sample_gene_name_ID_sites)
+
+
+
+# Save the workbook to a file
+saveWorkbook(wb, "output/Step03.C2U_QC_summary.xlsx", overwrite = TRUE)
+
+
+```
+
+
+

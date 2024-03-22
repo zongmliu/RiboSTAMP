@@ -1,0 +1,622 @@
+---
+title: "IGV"
+author: "Vu lab"
+date: "2023-05-08"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Genes
+```{r}
+library(tidyverse)
+
+load(file = "output/Step04.gene_epkm_rpkm_rbd_nsites.rdata")
+
+load(file = "output/Step05.gene_meta_bin.rdata")
+
+load(file = "output/Step.06.EPKM_SCR_shRNA_EPKMbin.rdata")
+load(file = "output/Step.06.nsites_SCR_shRNA_nsitesbin.rdata")
+
+load(file = "output/Step07.EPKM_differential.rdata")
+load(file = "output/Step07.nsites_differential.rdata")
+
+
+
+
+
+EPKMe3_shRNA_SCR_EPKMBin_metaBin <- left_join(res_shRNA_SCR_EPKM, gene_meta_bin, by = "Geneid") %>% 
+  left_join(gene_epkm_bin, by = "Geneid") %>%
+  rename(EPKM_bin = bin,
+         meta_Significant_bin = meta_bin) %>%
+  relocate(EPKM_bin, .after = direction)%>%
+  relocate(meta_Significant_bin, .after = direction)
+
+           
+
+nsites_shRNA_SCR_nsitesBin_metaBin <- left_join(res_shRNA_SCR_nsites, gene_meta_bin, by = "Geneid") %>% 
+  left_join(gene_nsites_bin, by = "Geneid") %>%
+  rename(nsites_bin = bin,
+         meta_Significant_bin = meta_bin) %>%
+  relocate(nsites_bin, .after = direction)%>%
+  relocate(meta_Significant_bin, .after = direction)
+
+# save as excel
+library(openxlsx)
+
+# Create a new workbook
+wb <- createWorkbook()
+
+## sheet1
+addWorksheet(wb, "EPKM_shRNA_SCR")
+writeData(wb, "EPKM_shRNA_SCR", EPKMe3_shRNA_SCR_EPKMBin_metaBin)
+
+## sheet2
+addWorksheet(wb, "nsites_shRNA_SCR")
+writeData(wb, "nsites_shRNA_SCR", nsites_shRNA_SCR_nsitesBin_metaBin)
+
+
+# Save the workbook to a file
+saveWorkbook(wb, "output/Step08.EPKM_nsites_shRNA_SCR_metaBin.xlsx", overwrite = TRUE)
+
+
+
+
+
+
+save(EPKMe3_shRNA_SCR_EPKMBin_metaBin, nsites_shRNA_SCR_nsitesBin_metaBin, file = "output/Step08.EPKM_nsites_shRNA_SCR_metaBin.rdata")
+
+
+```
+
+
+# IGV install
+https://data.broadinstitute.org/igv/projects/downloads/snapshot/IGV_Win_snapshot-WithJava-installer.exe​
+
+usage:
+https://software.broadinstitute.org/software/igv/book/export/html/6
+
+
+# target genes IGV
+
+## most
+
+## Loading GRCh38.109    geneome.fasta and genes.gtf
+
+If you have the .FASTA file for your reference genome sequence, it can be loaded by clicking on Genomes > Load Genome from File or Genomes > Load Genome from URL. In this case, the gene annotations will not be loaded automatically, but if you have the gene annotation file, it can be loaded like any other data file via the Files > Load from menus. To automatically load gene annotations, as well as an optional cytoband file, you can create a genome JSON file as described below. 
+
+
+
+gunzip Homo_sapiens.GRCh38.109.gtf.gz # decompress the GTF file
+sort -k1,1 -k4,4n Homo_sapiens.GRCh38.109.gtf > Homo_sapiens.GRCh38.109.sorted.gtf # sort the GTF file
+bgzip Homo_sapiens.GRCh38.109.sorted.gtf # compress the sorted GTF file
+tabix -p gff Homo_sapiens.GRCh38.109.sorted.gtf.gz # index the sorted GTF file
+
+
+https://github.com/igvteam/igv/issues/484
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+I use the IGV to check, when one site has multiply annotate, say CDS, ncRNA, it's CDS. (I think this make sense, because our data is Ribo-STAMP focuse mRNA). 
+
+However, when the intro, intergenic % too high, which might mean Ribo-APOBEC1 are not all fusion, experiments reason. 
+
+
+Now, annotate the sailor sites, and use GRCh38.109 solve the annotation error.
+
+
+I use these to annotate SCR_Rep1.bed, 
+
+sort -k1,1 -k2,2n SCR_Rep1.bed > SCR_Rep1_sorted.bed
+bedtools intersect -a SCR_Rep1_sorted.bed -b genes.gtf -wa -wb > SCR_Rep1.annotated.bed
+cut -f1,2,3,4,5,6,9,15 SCR_Rep1.annotated.bed > SCR_Rep1.annotated.filtered.bed
+awk -F'\t' 'BEGIN {OFS=FS} {match($8, /gene_id "([^"]+)";/, Geneid); match($8, /gene_name "([^"]+)";/, Genename); print $1, $2, $3, $4, $5, $6, $7, Geneid[1], Genename[1]}' SCR_Rep1.annotated.filtered.bed > SCR_Rep1_annotate.bed
+
+
+# Sailor site annotate
+
+## CDS, five_prime_utr, three_prime_utr
+
+cut -f3 SCR_Rep1.annotated.bed | sort | uniq
+
+
+## intronic
+https://dputhier.github.io/pygtftk/coordinates.html 
+
+Description: Returns a bed file containing the intronic regions. If by_transcript is false (default), returns merged genic regions with no exonic overlap (“strict” mode). Otherwise, the intronic regions corresponding to each transcript are returned (may contain exonic overlap and redundancy).
+
+
+
+
+
+
+
+```
+# conda-forge channels set up in the order below
+conda config --add channels defaults
+conda config --add channels bioconda
+conda config --add channels conda-forge
+
+# Installation
+conda create -n pygtftk pygtftk
+conda activate pygtftk
+
+# or Installation through setup.py
+git clone https://github.com/dputhier/pygtftk.git
+cd pygtftk
+# Check your Python version (>=3.8,<3.9)
+conda create -n py38 python=3.8
+conda activate py38
+pip install -r requirements.txt
+python setup.py install
+
+
+
+# before going further
+gtftk -h
+
+
+
+
+# intronic
+gtftk intronic -i genes.gtf -o intronic_regions.bed
+
+```
+
+
+vi gtftk_intronic.sh
+```
+#!/bin/bash
+#SBATCH --mem=100G
+#SBATCH -c 8
+#SBATCH -t 0-6:00:00
+
+# conda-forge channels set up in the order below
+conda config --add channels defaults
+conda config --add channels bioconda
+conda config --add channels conda-forge
+
+# Installation
+conda create -n pygtftk pygtftk
+conda activate pygtftk
+
+gtftk intronic -i genes.gtf -o intronic_regions.bed
+
+```
+
+
+
+
+gtfToGenePred -genePredExt genes.gtf genes.genepred
+genePredToBed genes.genepred genes.bed
+
+sort -k1,1 -k2,2n genes.bed > sorted_genes.bed
+mergeBed -i sorted_genes.bed > merged_genes.bed
+subtractBed -a merged_genes.bed -b sorted_genes.bed > intronic_regions.bed
+
+
+
+
+## intergenic (ignore this feature now)
+```
+# Sort the genes.gtf file by chromosome and start position
+sort -k1,1 -k4,4n genes.gtf > sorted_genes.gtf
+
+# Convert the sorted genes.gtf file to a bed format using the gffread tool from the Cufflinks package
+module load StdEnv/2020 intel/2020.1.217 cufflinks/2.2.1
+module load StdEnv/2020 bedtools/2.30.0
+
+gffread sorted_genes.gtf -T -o converted_genes.bed
+
+# Sort the input file using bedtools sort
+bedtools sort -i converted_genes.bed > sorted_genes.bed
+
+# Perform bedtools merge on the sorted file
+bedtools merge -i sorted_genes.bed > merged_genes.bed
+
+# Use awk to extract the chromosome names and lengths from the index file. 
+module load StdEnv/2020 samtools/1.17
+samtools faidx genome.fasta
+
+
+
+
+
+
+
+```
+
+
+
+## Get final annotaed bed file, features including: CDS, five_prime_utr, three_prime_utr, intronic, others
+merge CDS, five_prime_utr, three_prime_utr, intronic
+
+
+
+
+# C2U_before QC
+
+```{r}
+# load data
+load(file = "output/Step02.C2U.rdata")
+```
+
+
+
+## C2U_editRatio
+
+
+```{r}
+# Specify the file path where you want to save the BED file
+library(tidyverse)
+SCR_Rep1_editRatio <- SCR_Rep1 %>%
+  dplyr::select(chr, start, end, SCR_Rep1_editRatio) 
+
+SCR_Rep2_editRatio <- SCR_Rep2 %>%
+  dplyr::select(chr, start, end, SCR_Rep2_editRatio)
+SCR_Rep3_editRatio <- SCR_Rep3 %>%
+  dplyr::select(chr, start, end, SCR_Rep3_editRatio)
+
+dfs <- list(SCR_Rep1_editRatio, SCR_Rep2_editRatio, SCR_Rep3_editRatio)
+
+
+#  the across() function is used to convert the selected columns to numeric 
+# To display values without scientific notation, you can use the sprintf() function with the %f format specifier.
+SCR_editRatio <- reduce(dfs, full_join, by = c("chr", "start", "end")) %>%
+  mutate_all(~ ifelse(is.na(.), 0, .)) %>%
+  mutate(across(c(SCR_Rep1_editRatio, SCR_Rep2_editRatio, SCR_Rep3_editRatio), as.numeric)) %>%
+  mutate(editRatio = rowMeans(.[c("SCR_Rep1_editRatio", "SCR_Rep2_editRatio", "SCR_Rep3_editRatio")], na.rm = TRUE)) %>%
+  relocate(editRatio, .after = end) %>%
+  dplyr::select(c(1:4)) %>%
+  mutate(across(c(2:3), ~ format(as.numeric(.), scientific = FALSE)))  %>%
+  mutate(editRatio = round(editRatio, 3))
+
+# Save the dataframe as a BED file
+write.table(SCR_editRatio, file = "IGV/C2U_editRatio_filters/SCR_editRatio.bedGraph", sep = " ", quote = FALSE, row.names = FALSE, col.names = FALSE)
+
+
+
+
+shRNA33_Rep1_editRatio <- shRNA33_Rep1 %>%
+  dplyr::select(chr, start, end, shRNA33_Rep1_editRatio) 
+
+shRNA33_Rep2_editRatio <- shRNA33_Rep2 %>%
+  dplyr::select(chr, start, end, shRNA33_Rep2_editRatio)
+shRNA33_Rep3_editRatio <- shRNA33_Rep3 %>%
+  dplyr::select(chr, start, end, shRNA33_Rep3_editRatio)
+
+dfs <- list(shRNA33_Rep1_editRatio, shRNA33_Rep2_editRatio, shRNA33_Rep3_editRatio)
+
+
+#  the across() function is used to convert the selected columns to numeric 
+shRNA33_editRatio <- reduce(dfs, full_join, by = c("chr", "start", "end")) %>%
+  mutate_all(~ ifelse(is.na(.), 0, .)) %>%
+  mutate(across(c(shRNA33_Rep1_editRatio, shRNA33_Rep2_editRatio, shRNA33_Rep3_editRatio), as.numeric)) %>%
+  mutate(editRatio = rowMeans(.[c("shRNA33_Rep1_editRatio", "shRNA33_Rep2_editRatio", "shRNA33_Rep3_editRatio")], na.rm = TRUE)) %>%
+  relocate(editRatio, .after = end) %>%
+  dplyr::select(c(1:4)) %>%
+  mutate(across(c(2:3), ~ format(as.numeric(.), scientific = FALSE)))  %>%
+  mutate(editRatio = round(editRatio, 3))
+
+write.table(shRNA33_editRatio, file = "IGV/C2U_editRatio_filters/shRNA33_editRatio.bedGraph", sep = " ", quote = FALSE, row.names = FALSE, col.names = FALSE)
+ 
+
+
+
+shRNA37_Rep1_editRatio <- shRNA37_Rep1 %>%
+  dplyr::select(chr, start, end, shRNA37_Rep1_editRatio) 
+
+shRNA37_Rep2_editRatio <- shRNA37_Rep2 %>%
+  dplyr::select(chr, start, end, shRNA37_Rep2_editRatio)
+shRNA37_Rep3_editRatio <- shRNA37_Rep3 %>%
+  dplyr::select(chr, start, end, shRNA37_Rep3_editRatio)
+
+dfs <- list(shRNA37_Rep1_editRatio, shRNA37_Rep2_editRatio, shRNA37_Rep3_editRatio)
+
+
+#  the across() function is used to convert the selected columns to numeric 
+shRNA37_editRatio <- reduce(dfs, full_join, by = c("chr", "start", "end")) %>%
+  mutate_all(~ ifelse(is.na(.), 0, .)) %>%
+  mutate(across(c(shRNA37_Rep1_editRatio, shRNA37_Rep2_editRatio, shRNA37_Rep3_editRatio), as.numeric)) %>%
+  mutate(editRatio = rowMeans(.[c("shRNA37_Rep1_editRatio", "shRNA37_Rep2_editRatio", "shRNA37_Rep3_editRatio")], na.rm = TRUE)) %>%
+  relocate(editRatio, .after = end) %>%
+  dplyr::select(c(1:4)) %>%
+  mutate(across(c(2:3), ~ format(as.numeric(.), scientific = FALSE)))  %>%
+  mutate(editRatio = round(editRatio, 3))
+
+write.table(shRNA37_editRatio, file = "IGV/C2U_editRatio_filters/shRNA37_editRatio.bedGraph", sep = " ", quote = FALSE, row.names = FALSE, col.names = FALSE)
+
+
+
+
+
+
+
+
+
+
+```
+
+
+
+# C2U_0.5score
+
+```{r}
+library(tidyverse)
+
+# load data
+load(file = "output/Step02.C2U.rdata")
+
+
+## sites with confidence score >= 0.5
+
+confidence_score <- function(sample, prefix) {
+  # Generate the column name
+  column_name <- paste0(prefix, "_score")
+  # Filter the rows based on the column name
+  sample <- sample %>% 
+    filter(!!sym(column_name) >= 0.5)
+  
+  return(sample)
+}
+
+SCR_Rep1 <- confidence_score(SCR_Rep1, "SCR_Rep1")
+SCR_Rep2 <- confidence_score(SCR_Rep2, "SCR_Rep2")
+SCR_Rep3 <- confidence_score(SCR_Rep3, "SCR_Rep3")
+
+shRNA33_Rep1 <- confidence_score(shRNA33_Rep1, "shRNA33_Rep1")
+shRNA33_Rep2 <- confidence_score(shRNA33_Rep2, "shRNA33_Rep2")
+shRNA33_Rep3 <- confidence_score(shRNA33_Rep3, "shRNA33_Rep3")
+
+shRNA37_Rep1 <- confidence_score(shRNA37_Rep1, "shRNA37_Rep1")
+shRNA37_Rep2 <- confidence_score(shRNA37_Rep2, "shRNA37_Rep2")
+shRNA37_Rep3 <- confidence_score(shRNA37_Rep3, "shRNA37_Rep3")
+
+
+
+```
+
+
+
+
+## C2U_editRatio
+
+
+
+```{r}
+# Specify the file path where you want to save the BED file
+library(tidyverse)
+SCR_Rep1_editRatio <- SCR_Rep1 %>%
+  dplyr::select(chr, start, end, SCR_Rep1_editRatio) 
+
+SCR_Rep2_editRatio <- SCR_Rep2 %>%
+  dplyr::select(chr, start, end, SCR_Rep2_editRatio)
+SCR_Rep3_editRatio <- SCR_Rep3 %>%
+  dplyr::select(chr, start, end, SCR_Rep3_editRatio)
+
+dfs <- list(SCR_Rep1_editRatio, SCR_Rep2_editRatio, SCR_Rep3_editRatio)
+
+
+#  the across() function is used to convert the selected columns to numeric 
+# To display values without scientific notation, you can use the sprintf() function with the %f format specifier.
+SCR_editRatio <- reduce(dfs, full_join, by = c("chr", "start", "end")) %>%
+  mutate_all(~ ifelse(is.na(.), 0, .)) %>%
+  mutate(across(c(SCR_Rep1_editRatio, SCR_Rep2_editRatio, SCR_Rep3_editRatio), as.numeric)) %>%
+  mutate(editRatio = rowMeans(.[c("SCR_Rep1_editRatio", "SCR_Rep2_editRatio", "SCR_Rep3_editRatio")], na.rm = TRUE)) %>%
+  relocate(editRatio, .after = end) %>%
+  dplyr::select(c(1:4)) %>%
+  mutate(across(c(2:3), ~ format(as.numeric(.), scientific = FALSE)))  %>%
+  mutate(editRatio = round(editRatio, 3))
+
+# Save the dataframe as a BED file
+write.table(SCR_editRatio, file = "IGV/C2U_editRatio_filters/SCR_0.5score_editRatio.bedGraph", sep = " ", quote = FALSE, row.names = FALSE, col.names = FALSE)
+
+
+
+
+shRNA33_Rep1_editRatio <- shRNA33_Rep1 %>%
+  dplyr::select(chr, start, end, shRNA33_Rep1_editRatio) 
+
+shRNA33_Rep2_editRatio <- shRNA33_Rep2 %>%
+  dplyr::select(chr, start, end, shRNA33_Rep2_editRatio)
+shRNA33_Rep3_editRatio <- shRNA33_Rep3 %>%
+  dplyr::select(chr, start, end, shRNA33_Rep3_editRatio)
+
+dfs <- list(shRNA33_Rep1_editRatio, shRNA33_Rep2_editRatio, shRNA33_Rep3_editRatio)
+
+
+#  the across() function is used to convert the selected columns to numeric 
+shRNA33_editRatio <- reduce(dfs, full_join, by = c("chr", "start", "end")) %>%
+  mutate_all(~ ifelse(is.na(.), 0, .)) %>%
+  mutate(across(c(shRNA33_Rep1_editRatio, shRNA33_Rep2_editRatio, shRNA33_Rep3_editRatio), as.numeric)) %>%
+  mutate(editRatio = rowMeans(.[c("shRNA33_Rep1_editRatio", "shRNA33_Rep2_editRatio", "shRNA33_Rep3_editRatio")], na.rm = TRUE)) %>%
+  relocate(editRatio, .after = end) %>%
+  dplyr::select(c(1:4)) %>%
+  mutate(across(c(2:3), ~ format(as.numeric(.), scientific = FALSE)))  %>%
+  mutate(editRatio = round(editRatio, 3))
+
+write.table(shRNA33_editRatio, file = "IGV/C2U_editRatio_filters/shRNA33_0.5score_editRatio.bedGraph", sep = " ", quote = FALSE, row.names = FALSE, col.names = FALSE)
+ 
+
+
+
+shRNA37_Rep1_editRatio <- shRNA37_Rep1 %>%
+  dplyr::select(chr, start, end, shRNA37_Rep1_editRatio) 
+
+shRNA37_Rep2_editRatio <- shRNA37_Rep2 %>%
+  dplyr::select(chr, start, end, shRNA37_Rep2_editRatio)
+shRNA37_Rep3_editRatio <- shRNA37_Rep3 %>%
+  dplyr::select(chr, start, end, shRNA37_Rep3_editRatio)
+
+dfs <- list(shRNA37_Rep1_editRatio, shRNA37_Rep2_editRatio, shRNA37_Rep3_editRatio)
+
+
+#  the across() function is used to convert the selected columns to numeric 
+shRNA37_editRatio <- reduce(dfs, full_join, by = c("chr", "start", "end")) %>%
+  mutate_all(~ ifelse(is.na(.), 0, .)) %>%
+  mutate(across(c(shRNA37_Rep1_editRatio, shRNA37_Rep2_editRatio, shRNA37_Rep3_editRatio), as.numeric)) %>%
+  mutate(editRatio = rowMeans(.[c("shRNA37_Rep1_editRatio", "shRNA37_Rep2_editRatio", "shRNA37_Rep3_editRatio")], na.rm = TRUE)) %>%
+  relocate(editRatio, .after = end) %>%
+  dplyr::select(c(1:4)) %>%
+  mutate(across(c(2:3), ~ format(as.numeric(.), scientific = FALSE)))  %>%
+  mutate(editRatio = round(editRatio, 3))
+
+write.table(shRNA37_editRatio, file = "IGV/C2U_editRatio_filters/shRNA37_0.5score_editRatio.bedGraph", sep = " ", quote = FALSE, row.names = FALSE, col.names = FALSE)
+
+
+
+
+
+
+
+
+
+
+```
+
+
+
+
+# C2U_0.5score_2sites
+
+```{r}
+library(tidyverse)
+load(file = "output/Step03.C2U_QC.rdata")
+
+```
+
+
+
+When importing a BED file into the Integrative Genomics Viewer (IGV), you can choose which column values to display as additional annotations. Here's how you can specify the column values to show in IGV:
+
+Open IGV and load your genome of interest.
+Go to "File" and select "Load From File" to load your BED file.
+Once the BED file is loaded, right-click on the track and select "Track Options" or simply double-click on the track.
+In the "Track Options" dialog box, navigate to the "Display Mode" section.
+Under "Annotation Display Mode," you can choose the column value(s) that you want to show as annotations. You can select multiple columns if needed.
+Click "OK" to apply the changes.
+IGV will now display the chosen column values as additional annotations along with the BED file track. You can customize the appearance of these annotations by adjusting their colors, labels, and other settings within the "Track Options" dialog box.
+
+Note that the available column values in the BED file will depend on the content and structure of your specific file.
+
+
+## C2U_editRatio
+
+
+```{r}
+# Specify the file path where you want to save the BED file
+library(tidyverse)
+SCR_Rep1_editRatio <- SCR_Rep1 %>%
+  dplyr::select(chr, start, end, SCR_Rep1_editRatio) 
+
+SCR_Rep2_editRatio <- SCR_Rep2 %>%
+  dplyr::select(chr, start, end, SCR_Rep2_editRatio)
+SCR_Rep3_editRatio <- SCR_Rep3 %>%
+  dplyr::select(chr, start, end, SCR_Rep3_editRatio)
+
+dfs <- list(SCR_Rep1_editRatio, SCR_Rep2_editRatio, SCR_Rep3_editRatio)
+
+
+#  the across() function is used to convert the selected columns to numeric 
+# To display values without scientific notation, you can use the sprintf() function with the %f format specifier.
+SCR_editRatio <- reduce(dfs, full_join, by = c("chr", "start", "end")) %>%
+  mutate_all(~ ifelse(is.na(.), 0, .)) %>%
+  mutate(across(c(SCR_Rep1_editRatio, SCR_Rep2_editRatio, SCR_Rep3_editRatio), as.numeric)) %>%
+  mutate(editRatio = rowMeans(.[c("SCR_Rep1_editRatio", "SCR_Rep2_editRatio", "SCR_Rep3_editRatio")], na.rm = TRUE)) %>%
+  relocate(editRatio, .after = end) %>%
+  dplyr::select(c(1:4)) %>%
+  mutate(across(c(2:3), ~ format(as.numeric(.), scientific = FALSE)))  %>%
+  mutate(editRatio = round(editRatio, 3))
+
+# Save the dataframe as a BED file
+write.table(SCR_editRatio, file = "IGV/C2U_editRatio_filters/SCR_0.5score_2sites_editRatio.bedGraph", sep = " ", quote = FALSE, row.names = FALSE, col.names = FALSE)
+
+
+
+
+shRNA33_Rep1_editRatio <- shRNA33_Rep1 %>%
+  dplyr::select(chr, start, end, shRNA33_Rep1_editRatio) 
+
+shRNA33_Rep2_editRatio <- shRNA33_Rep2 %>%
+  dplyr::select(chr, start, end, shRNA33_Rep2_editRatio)
+shRNA33_Rep3_editRatio <- shRNA33_Rep3 %>%
+  dplyr::select(chr, start, end, shRNA33_Rep3_editRatio)
+
+dfs <- list(shRNA33_Rep1_editRatio, shRNA33_Rep2_editRatio, shRNA33_Rep3_editRatio)
+
+
+#  the across() function is used to convert the selected columns to numeric 
+shRNA33_editRatio <- reduce(dfs, full_join, by = c("chr", "start", "end")) %>%
+  mutate_all(~ ifelse(is.na(.), 0, .)) %>%
+  mutate(across(c(shRNA33_Rep1_editRatio, shRNA33_Rep2_editRatio, shRNA33_Rep3_editRatio), as.numeric)) %>%
+  mutate(editRatio = rowMeans(.[c("shRNA33_Rep1_editRatio", "shRNA33_Rep2_editRatio", "shRNA33_Rep3_editRatio")], na.rm = TRUE)) %>%
+  relocate(editRatio, .after = end) %>%
+  dplyr::select(c(1:4)) %>%
+  mutate(across(c(2:3), ~ format(as.numeric(.), scientific = FALSE)))  %>%
+  mutate(editRatio = round(editRatio, 3))
+
+write.table(shRNA33_editRatio, file = "IGV/C2U_editRatio_filters/shRNA33_0.5score_2sites_editRatio.bedGraph", sep = " ", quote = FALSE, row.names = FALSE, col.names = FALSE)
+ 
+
+
+
+shRNA37_Rep1_editRatio <- shRNA37_Rep1 %>%
+  dplyr::select(chr, start, end, shRNA37_Rep1_editRatio) 
+
+shRNA37_Rep2_editRatio <- shRNA37_Rep2 %>%
+  dplyr::select(chr, start, end, shRNA37_Rep2_editRatio)
+shRNA37_Rep3_editRatio <- shRNA37_Rep3 %>%
+  dplyr::select(chr, start, end, shRNA37_Rep3_editRatio)
+
+dfs <- list(shRNA37_Rep1_editRatio, shRNA37_Rep2_editRatio, shRNA37_Rep3_editRatio)
+
+
+#  the across() function is used to convert the selected columns to numeric 
+shRNA37_editRatio <- reduce(dfs, full_join, by = c("chr", "start", "end")) %>%
+  mutate_all(~ ifelse(is.na(.), 0, .)) %>%
+  mutate(across(c(shRNA37_Rep1_editRatio, shRNA37_Rep2_editRatio, shRNA37_Rep3_editRatio), as.numeric)) %>%
+  mutate(editRatio = rowMeans(.[c("shRNA37_Rep1_editRatio", "shRNA37_Rep2_editRatio", "shRNA37_Rep3_editRatio")], na.rm = TRUE)) %>%
+  relocate(editRatio, .after = end) %>%
+  dplyr::select(c(1:4)) %>%
+  mutate(across(c(2:3), ~ format(as.numeric(.), scientific = FALSE)))  %>%
+  mutate(editRatio = round(editRatio, 3))
+
+write.table(shRNA37_editRatio, file = "IGV/C2U_editRatio_filters/shRNA37_0.5score_2sites_editRatio.bedGraph", sep = " ", quote = FALSE, row.names = FALSE, col.names = FALSE)
+
+
+
+
+
+
+
+
+
+
+```
+
+
+

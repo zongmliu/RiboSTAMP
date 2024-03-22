@@ -1,0 +1,948 @@
+---
+title: "Step06. Quartile_BoxPlot"
+author: "Vu lab"
+date: "2023-05-03"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+for the quartile analysis with EPKM, nsites, RPKM --> we should use just EPKM, nisites, RPKM for scramble --> since the KD affects editing frequency + editing sites.
+quartile bins is defined based on the average value of 3 SCR samples from high to low.  Cut by EPKM, and nsites
+
+
+```{r}
+library(tidyverse)
+library(rstatix)
+library(ggpubr)
+
+load(file = "output/Step04.gene_epkm_rpkm_rbd_nsites.rdata")
+
+class(gene_epkm)
+class(gene_rpkm)
+class(gene_nsites)
+class(gene_rbd)
+
+```
+
+
+
+# EPKM * e3 Quartile BoxPlot
+
+```{r}
+gene_epkm <- gene_epkm %>%  
+  rename_all(~ gsub("_EPKM", "", .)) %>%
+  mutate_all(~ ifelse(is.na(.), 0, .)) %>%
+  column_to_rownames(var = "Geneid") %>%
+  mutate_all(~ . * 1e3) %>%
+  rownames_to_column(var = "Geneid")
+
+```
+
+## EPKM * e3 bins cut by SCR EPKM value
+
+### SCR, shRNA33, shRNA37
+
+```{r}
+library(tidyverse)
+library(rstatix)
+library(ggpubr)
+
+
+gene_epkm_bin <- gene_epkm %>%
+  arrange(desc((SCR_Rep1 + SCR_Rep2 + SCR_Rep3)/3))
+
+# Calculate the number of rows in each bin 
+rows_per_bin <- nrow(gene_epkm_bin) / 4
+# Print the number of genes in each quartile
+print(paste("Each quartile genes number:", rows_per_bin))
+
+# Add a new "bin" column based on the row index
+gene_epkm_bin <- gene_epkm_bin %>%
+  mutate(bin = as.integer((row_number() - 1) / rows_per_bin) + 1)
+
+# Reshape the data to long format
+long_data <- gene_epkm_bin %>%
+  gather(key = "sample_Rep", value = "EPKM", SCR_Rep1, SCR_Rep2, SCR_Rep3, shRNA33_Rep1, shRNA33_Rep2, shRNA33_Rep3, shRNA37_Rep1, shRNA37_Rep2, shRNA37_Rep3) %>%
+  mutate(sample_group = case_when(
+    grepl("SCR", sample_Rep) ~ "SCR",
+    grepl("shRNA33", sample_Rep) ~ "shRNA33",
+    grepl("shRNA37", sample_Rep) ~ "shRNA37"
+  ))
+
+# Perform pairwise Wilcoxon rank-sum tests
+pairwise_comparisons <- long_data %>%
+  group_by(bin) %>%
+  pairwise_wilcox_test(EPKM ~ sample_group, p.adjust.method = "bonferroni")
+
+# Filter the significant comparisons (e.g., p-value < 0.05)
+EPKM_3_significant_comparisons <- pairwise_comparisons %>%
+  filter(p.adj < 0.05)
+
+print(EPKM_3_significant_comparisons)
+
+# Calculate the average EPKM value for each sample group in each bin
+average_EPKM <- long_data %>%
+  group_by(bin, sample_group) %>%
+  summarize(mean_EPKM = mean(EPKM),
+            median_EPKM = median(EPKM),
+            .groups = "drop")
+
+
+
+
+
+# Print the average EPKM values
+print(average_EPKM)
+
+
+# save as excel
+library(openxlsx)
+
+# Create a new workbook
+wb <- createWorkbook()
+
+# Add the data frames as sheets to the workbook
+## sheet1
+addWorksheet(wb, "gene_epkm")
+writeData(wb, "gene_epkm", gene_epkm)
+
+## sheet2
+addWorksheet(wb, "EPKM_bins")
+writeData(wb, "EPKM_bins", long_data)
+
+## sheet3
+addWorksheet(wb, "3groups_significant")
+writeData(wb, "3groups_significant", EPKM_3_significant_comparisons)
+
+## sheet4
+addWorksheet(wb, "average_EPKM")
+writeData(wb, "average_EPKM", average_EPKM)
+
+# Save the workbook to a file
+saveWorkbook(wb, "output/Step06.EPKM_Quartile_binByEPKM_3groups.xlsx", overwrite = TRUE)
+
+
+
+
+# Generate the box plot
+colors <- c("#C1C0C0", "#76D7FF", "#1796FF")
+
+
+EPKM_Quartile_binByEPKM_3groups <- ggplot(long_data, aes(x = as.factor(bin), y = log2(EPKM + 1), fill = sample_group)) +
+  geom_boxplot(color = "grey50", outlier.size = 0.5) +
+  labs(x = "Quartile", y = "log2(EPKM * 1e3 + 1)", title = "Rank by control EPKM value") +
+  scale_fill_manual(values = colors, 
+                    labels = c("control", "KD-33", "KD-37"),
+                    name = "") +
+  theme_classic() +
+  theme(legend.position = c(0.82, 0.95),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.background = element_rect(fill = "transparent", color = NA),
+        legend.text = element_text(size = 9),
+        legend.title = element_text(size = 9),
+        legend.key.size = unit(0.3, "cm"),
+        aspect.ratio = 2/1)
+
+
+
+ggsave("output/Ste06.EPKM_Quartile_binByEPKM_3groups.pdf", plot = EPKM_Quartile_binByEPKM_3groups, device = "pdf", width = 8, height = 6)
+
+
+
+
+
+
+
+```
+
+
+### Bins analysis but between 2 groups scr vs. sh (33+ 37)
+
+
+```{r}
+# Reshape the data to long format
+long_data <- gene_epkm_bin %>%
+  gather(key = "sample_Rep", value = "EPKM", SCR_Rep1, SCR_Rep2, SCR_Rep3, shRNA33_Rep1, shRNA33_Rep2, shRNA33_Rep3, shRNA37_Rep1, shRNA37_Rep2, shRNA37_Rep3) %>%
+  mutate(sample_group = case_when(
+    grepl("SCR", sample_Rep) ~ "SCR",
+    grepl("shRNA33", sample_Rep) ~ "shRNA33",
+    grepl("shRNA37", sample_Rep) ~ "shRNA37"
+  )) %>%
+  mutate(combined_group = case_when(
+    sample_group == "SCR" ~ "SCR",
+    sample_group %in% c("shRNA33", "shRNA37") ~ "shRNA"
+  ))
+
+# Perform pairwise Wilcoxon rank-sum tests
+pairwise_comparisons <- long_data %>%
+  group_by(bin) %>%
+  pairwise_wilcox_test(EPKM ~ combined_group, p.adjust.method = "bonferroni", pool.sd = FALSE)
+
+# Filter the significant comparisons (e.g., p-value < 0.05)
+EPKM_2_significant_comparisons <- pairwise_comparisons %>%
+  filter(p.adj < 0.05)
+
+print(EPKM_2_significant_comparisons)
+
+# Calculate the average EPKM value for each sample group in each bin
+average_EPKM <- long_data %>%
+  group_by(bin, combined_group) %>%
+  summarize(mean_EPKM = mean(EPKM),
+            median_EPKM = median(EPKM),
+            .groups = "drop")
+
+
+# Print the average EPKM values
+print(average_EPKM)
+
+
+# save as excel
+library(openxlsx)
+
+# Create a new workbook
+wb <- createWorkbook()
+
+# Add the data frames as sheets to the workbook
+## sheet1
+addWorksheet(wb, "gene_epkm")
+writeData(wb, "gene_epkm", gene_epkm)
+
+## sheet2
+addWorksheet(wb, "EPKM_bins")
+writeData(wb, "EPKM_bins", long_data)
+
+## sheet3
+addWorksheet(wb, "2groups_significant")
+writeData(wb, "2groups_significant", EPKM_2_significant_comparisons)
+
+## sheet4
+addWorksheet(wb, "average_EPKM")
+writeData(wb, "average_EPKM", average_EPKM)
+
+# Save the workbook to a file
+saveWorkbook(wb, "output/Step06.EPKM_Quartile_binByEPKM_2groups.xlsx", overwrite = TRUE)
+
+
+
+# Generate the box plot
+colors <- c("#C1C0C0", "#1796FF")
+
+
+EPKM_Quartile_binByEPKM_2groups <- ggplot(long_data, aes(x = as.factor(bin), y = log2(EPKM + 1), fill = combined_group)) +
+  geom_boxplot(color = "grey50", outlier.size = 0.5) +
+  labs(x = "Quartile", y = "log2(EPKM * 1e3 + 1)", title = "Rank by control EPKM value") +
+  scale_fill_manual(values = colors, labels = c("control", "KD"), name = "") +
+  theme_classic() +
+  theme(legend.position = c(0.82, 0.95),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.background = element_rect(fill = "transparent", color = NA),
+        legend.text = element_text(size = 9),
+        legend.title = element_text(size = 9),
+        legend.key.size = unit(0.3, "cm"),
+        aspect.ratio = 2/1)
+
+ggsave("output/Ste06.EPKM_Quartile_binByEPKM_2groups.pdf", plot = EPKM_Quartile_binByEPKM_2groups, device = "pdf", width = 8, height = 6)
+
+
+
+
+save(gene_epkm_bin, file = "output/Step.06.EPKM_SCR_shRNA_EPKMbin.rdata")
+
+
+```
+
+
+
+
+
+
+
+
+## EPKM bins cut by SCR nsite value
+
+### SCR, shRNA33, shRNA37
+
+```{r}
+library(tidyverse)
+library(rstatix)
+library(ggpubr)
+gene_nsites_SCR <- gene_nsites %>%
+  dplyr::select(c(1:4))
+
+gene_epkm_bin <- gene_epkm %>% left_join(gene_nsites_SCR, by = "Geneid") %>%
+  arrange(desc((SCR_Rep1_nsites + SCR_Rep2_nsites + SCR_Rep3_nsites)/3))
+
+# Calculate the number of rows in each bin 
+rows_per_bin <- nrow(gene_epkm_bin) / 4
+
+# Print the number of genes in each quartile
+print(paste("Each quartile genes number:", rows_per_bin))
+
+
+# Add a new "bin" column based on the row index
+gene_epkm_bin <- gene_epkm_bin %>%
+  mutate(bin = as.integer((row_number() - 1) / rows_per_bin) + 1)
+
+# Reshape the data to long format
+long_data <- gene_epkm_bin %>%
+  gather(key = "sample_Rep", value = "EPKM", SCR_Rep1, SCR_Rep2, SCR_Rep3, shRNA33_Rep1, shRNA33_Rep2, shRNA33_Rep3, shRNA37_Rep1, shRNA37_Rep2, shRNA37_Rep3) %>%
+  mutate(sample_group = case_when(
+    grepl("SCR", sample_Rep) ~ "SCR",
+    grepl("shRNA33", sample_Rep) ~ "shRNA33",
+    grepl("shRNA37", sample_Rep) ~ "shRNA37"
+  ))
+
+# Perform pairwise Wilcoxon rank-sum tests
+pairwise_comparisons <- long_data %>%
+  group_by(bin) %>%
+  pairwise_wilcox_test(EPKM ~ sample_group, p.adjust.method = "bonferroni")
+
+# Filter the significant comparisons (e.g., p-value < 0.05)
+EPKM_3_significant_comparisons <- pairwise_comparisons %>%
+  filter(p.adj < 0.05)
+
+print(EPKM_3_significant_comparisons)
+
+# Calculate the average EPKM value for each sample group in each bin
+average_EPKM <- long_data %>%
+  group_by(bin, sample_group) %>%
+  summarize(mean_EPKM = mean(EPKM),
+            median_EPKM = median(EPKM),
+            .groups = "drop")
+
+
+# Print the average EPKM values
+print(average_EPKM)
+
+
+# save as excel
+library(openxlsx)
+
+# Create a new workbook
+wb <- createWorkbook()
+
+# Add the data frames as sheets to the workbook
+## sheet1
+addWorksheet(wb, "gene_epkm")
+writeData(wb, "gene_epkm", gene_epkm)
+
+## sheet2
+addWorksheet(wb, "EPKM_bins")
+writeData(wb, "EPKM_bins", long_data)
+
+## sheet3
+addWorksheet(wb, "3groups_significant")
+writeData(wb, "3groups_significant", EPKM_3_significant_comparisons)
+
+## sheet4
+addWorksheet(wb, "average_EPKM")
+writeData(wb, "average_EPKM", average_EPKM)
+
+# Save the workbook to a file
+saveWorkbook(wb, "output/Step06.EPKM_Quartile_binBynsites_3groups.xlsx", overwrite = TRUE)
+
+
+
+
+# Generate the box plot
+colors <- c("#C1C0C0", "#76D7FF", "#1796FF")
+
+
+EPKM_Quartile_binBynsites_3groups <- ggplot(long_data, aes(x = as.factor(bin), y = log2(EPKM + 1), fill = sample_group)) +
+  geom_boxplot(color = "grey50", outlier.size = 0.5) +
+  labs(x = "Quartile", y = "log2(EPKM * 1e3 + 1)", title = "Rank by control nsites value") +
+  scale_fill_manual(values = colors, 
+                    labels = c("control", "KD-33", "KD-37"),
+                    name = "") +
+  theme_classic() +
+  theme(legend.position = c(0.82, 0.95),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.background = element_rect(fill = "transparent", color = NA),
+        legend.text = element_text(size = 9),
+        legend.title = element_text(size = 9),
+        legend.key.size = unit(0.3, "cm"),
+        aspect.ratio = 2/1)
+
+
+
+ggsave("output/Ste06.EPKM_Quartile_binBynsites_3groups.pdf", plot = EPKM_Quartile_binBynsites_3groups, device = "pdf", width = 8, height = 6)
+
+
+
+
+
+
+
+```
+
+
+### Bins analysis but between 2 groups scr vs. sh (33+ 37)
+
+
+```{r}
+# Reshape the data to long format
+long_data <- gene_epkm_bin %>%
+  gather(key = "sample_Rep", value = "EPKM", SCR_Rep1, SCR_Rep2, SCR_Rep3, shRNA33_Rep1, shRNA33_Rep2, shRNA33_Rep3, shRNA37_Rep1, shRNA37_Rep2, shRNA37_Rep3) %>%
+  mutate(sample_group = case_when(
+    grepl("SCR", sample_Rep) ~ "SCR",
+    grepl("shRNA33", sample_Rep) ~ "shRNA33",
+    grepl("shRNA37", sample_Rep) ~ "shRNA37"
+  )) %>%
+  mutate(combined_group = case_when(
+    sample_group == "SCR" ~ "SCR",
+    sample_group %in% c("shRNA33", "shRNA37") ~ "shRNA"
+  ))
+
+# Perform pairwise Wilcoxon rank-sum tests
+pairwise_comparisons <- long_data %>%
+  group_by(bin) %>%
+  pairwise_wilcox_test(EPKM ~ combined_group, p.adjust.method = "bonferroni", pool.sd = FALSE)
+
+# Filter the significant comparisons (e.g., p-value < 0.05)
+EPKM_2_significant_comparisons <- pairwise_comparisons %>%
+  filter(p.adj < 0.05)
+
+print(EPKM_2_significant_comparisons)
+
+# Calculate the average EPKM value for each sample group in each bin
+average_EPKM <- long_data %>%
+  group_by(bin, combined_group) %>%
+  summarize(mean_EPKM = mean(EPKM),
+            median_EPKM = median(EPKM),
+            .groups = "drop")
+
+
+# Print the average EPKM values
+print(average_EPKM)
+
+
+# save as excel
+library(openxlsx)
+
+# Create a new workbook
+wb <- createWorkbook()
+
+# Add the data frames as sheets to the workbook
+## sheet1
+addWorksheet(wb, "gene_epkm")
+writeData(wb, "gene_epkm", gene_epkm)
+
+## sheet2
+addWorksheet(wb, "EPKM_bins")
+writeData(wb, "EPKM_bins", long_data)
+
+## sheet3
+addWorksheet(wb, "2groups_significant")
+writeData(wb, "2groups_significant", EPKM_2_significant_comparisons)
+
+## sheet4
+addWorksheet(wb, "average_EPKM")
+writeData(wb, "average_EPKM", average_EPKM)
+
+# Save the workbook to a file
+saveWorkbook(wb, "output/Step06.EPKM_Quartile_binBynsites_2groups.xlsx", overwrite = TRUE)
+
+
+
+# Generate the box plot
+colors <- c("#C1C0C0", "#1796FF")
+
+
+EPKM_Quartile_binBynsites_2groups <- ggplot(long_data, aes(x = as.factor(bin), y = log2(EPKM + 1), fill = combined_group)) +
+  geom_boxplot(color = "grey50", outlier.size = 0.5) +
+  labs(x = "Quartile", y = "log2(EPKM * 1e3 + 1)", title = "Rank by control nsites value") +
+  scale_fill_manual(values = colors, 
+                    labels = c("control", "KD"),
+                    name = "") +
+  theme_classic() +
+  theme(legend.position = c(0.82, 0.95),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.background = element_rect(fill = "transparent", color = NA),
+        legend.text = element_text(size = 9),
+        legend.title = element_text(size = 9),
+        legend.key.size = unit(0.3, "cm"),
+        aspect.ratio = 2/1)
+
+
+
+ggsave("output/Ste06.EPKM_Quartile_binBynsites_2groups.pdf", plot = EPKM_Quartile_binBynsites_2groups, device = "pdf", width = 8, height = 6)
+
+
+
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+# nsites Quartile BoxPlot
+## nsites bins cut by SCR EPKM value
+### SCR, shRNA33, shRNA37
+
+
+```{r}
+gene_EPKM_SCR <- gene_epkm %>%
+  dplyr::select(c(1:4)) %>%
+  rename(SCR_Rep1_EPKM = SCR_Rep1,
+         SCR_Rep2_EPKM = SCR_Rep2,
+         SCR_Rep3_EPKM = SCR_Rep3)
+
+
+gene_nsites_bin <- gene_nsites %>%  
+  rename_all(~ gsub("_nsites", "", .)) %>%
+  mutate_all(~ ifelse(is.na(.), 0, .)) %>% left_join(gene_EPKM_SCR, by = "Geneid") %>%
+  arrange(desc((SCR_Rep1_EPKM + SCR_Rep2_EPKM + SCR_Rep3_EPKM)/3)) 
+
+
+# Calculate the number of rows in each bin 
+rows_per_bin <- nrow(gene_nsites_bin) / 4
+# Print the number of genes in each quartile
+print(paste("Each quartile genes number:", rows_per_bin))
+
+# Add a new "bin" column based on the row index
+gene_nsites_bin <- gene_nsites_bin %>%
+  mutate(bin = as.integer((row_number() - 1) / rows_per_bin) + 1)
+
+# Reshape the data to long format
+long_data <- gene_nsites_bin %>%
+  gather(key = "sample_Rep", value = "nsites", SCR_Rep1, SCR_Rep2, SCR_Rep3, shRNA33_Rep1, shRNA33_Rep2, shRNA33_Rep3, shRNA37_Rep1, shRNA37_Rep2, shRNA37_Rep3) %>%
+  mutate(sample_group = case_when(
+    grepl("SCR", sample_Rep) ~ "SCR",
+    grepl("shRNA33", sample_Rep) ~ "shRNA33",
+    grepl("shRNA37", sample_Rep) ~ "shRNA37"
+  ))
+
+# Perform pairwise Wilcoxon rank-sum tests
+pairwise_comparisons <- long_data %>%
+  group_by(bin) %>%
+  pairwise_wilcox_test(nsites ~ sample_group, p.adjust.method = "bonferroni")
+
+# Filter the significant comparisons (e.g., p-value < 0.05)
+nsites_3_significant_comparisons <- pairwise_comparisons %>%
+  filter(p.adj < 0.05)
+
+print(nsites_3_significant_comparisons)
+
+# Calculate the average EPKM value for each sample group in each bin
+average_nsites <- long_data %>%
+  group_by(bin, sample_group) %>%
+  summarize(mean_nsites = mean(nsites),
+            median_nsites = median(nsites),
+            .groups = "drop")
+
+
+# Print the average EPKM values
+print(average_nsites)
+
+
+# save as excel
+library(openxlsx)
+
+# Create a new workbook
+wb <- createWorkbook()
+
+# Add the data frames as sheets to the workbook
+## sheet1
+addWorksheet(wb, "gene_nsites")
+writeData(wb, "gene_nsites", gene_nsites)
+
+## sheet2
+addWorksheet(wb, "nsites_bins")
+writeData(wb, "nsites_bins", long_data)
+
+## sheet3
+addWorksheet(wb, "3groups_significant")
+writeData(wb, "3groups_significant", nsites_3_significant_comparisons)
+
+## sheet4
+addWorksheet(wb, "average_nsites")
+writeData(wb, "average_nsites", average_nsites)
+
+# Save the workbook to a file
+saveWorkbook(wb, "output/Step06.nsites_Quartile_binByEPKM_3groups.xlsx", overwrite = TRUE)
+
+
+
+
+
+# Generate the box plot
+colors <- c("#C1C0C0", "#76D7FF", "#1796FF")
+
+
+nsites_Quartile_binByEPKM_3groups <- ggplot(long_data, aes(x = as.factor(bin), y = log2(nsites + 1), fill = sample_group)) +
+  geom_boxplot(color = "grey50", outlier.size = 0.5) +
+  labs(x = "Quartile", y = "log2(nsites + 1)", title = "Rank by control EPKM value") +
+  scale_fill_manual(values = colors, 
+                    labels = c("control", "KD-33", "KD-37"),
+                    name = "") +
+  theme_classic() +
+  theme(legend.position = c(0.82, 0.95),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.background = element_rect(fill = "transparent", color = NA),
+        legend.text = element_text(size = 9),
+        legend.title = element_text(size = 9),
+        legend.key.size = unit(0.3, "cm"),
+        aspect.ratio = 2/1)
+
+
+
+ggsave("output/Ste06.nsites_Quartile_binByEPKM_3groups.pdf", plot = nsites_Quartile_binByEPKM_3groups, device = "pdf", width = 8, height = 6)
+
+
+
+
+
+
+```
+
+
+### Bins analysis but between 2 groups scr vs. sh (33+ 37)
+
+
+```{r}
+# Reshape the data to long format
+long_data <- gene_nsites_bin %>%
+  gather(key = "sample_Rep", value = "nsites", SCR_Rep1, SCR_Rep2, SCR_Rep3, shRNA33_Rep1, shRNA33_Rep2, shRNA33_Rep3, shRNA37_Rep1, shRNA37_Rep2, shRNA37_Rep3) %>%
+  mutate(sample_group = case_when(
+    grepl("SCR", sample_Rep) ~ "SCR",
+    grepl("shRNA33", sample_Rep) ~ "shRNA33",
+    grepl("shRNA37", sample_Rep) ~ "shRNA37"
+  )) %>%
+  mutate(combined_group = case_when(
+    sample_group == "SCR" ~ "SCR",
+    sample_group %in% c("shRNA33", "shRNA37") ~ "shRNA"
+  ))
+
+# Perform pairwise Wilcoxon rank-sum tests
+pairwise_comparisons <- long_data %>%
+  group_by(bin) %>%
+  pairwise_wilcox_test(nsites ~ combined_group, p.adjust.method = "bonferroni", pool.sd = FALSE)
+
+# Filter the significant comparisons (e.g., p-value < 0.05)
+nsites_2_significant_comparisons <- pairwise_comparisons %>%
+  filter(p.adj < 0.05)
+
+print(nsites_2_significant_comparisons)
+
+
+
+# Calculate the average EPKM value for each sample group in each bin
+average_nsites <- long_data %>%
+  group_by(bin, combined_group) %>%
+  summarize(mean_nsites = mean(nsites),
+            median_nsites = median(nsites),
+            .groups = "drop")
+
+# Print the average EPKM values
+print(average_nsites)
+
+
+# save as excel
+library(openxlsx)
+
+# Create a new workbook
+wb <- createWorkbook()
+
+# Add the data frames as sheets to the workbook
+## sheet1
+addWorksheet(wb, "gene_nsites")
+writeData(wb, "gene_nsites", gene_nsites)
+
+## sheet2
+addWorksheet(wb, "nsites_bins")
+writeData(wb, "nsites_bins", long_data)
+
+## sheet3
+addWorksheet(wb, "2groups_significant")
+writeData(wb, "2groups_significant", nsites_2_significant_comparisons)
+
+## sheet4
+addWorksheet(wb, "average_nsites")
+writeData(wb, "average_nsites", average_nsites)
+
+# Save the workbook to a file
+saveWorkbook(wb, "output/Step06.nsites_Quartile_binByEPKM_2groups.xlsx", overwrite = TRUE)
+
+
+
+
+
+# Generate the box plot
+colors <- c("#C1C0C0", "#1796FF")
+
+
+nsites_Quartile_binByEPKM_2groups <- ggplot(long_data, aes(x = as.factor(bin), y = log2(nsites + 1), fill = combined_group)) +
+  geom_boxplot(color = "grey50", outlier.size = 0.5) +
+  labs(x = "Quartile", y = "log2(nsites + 1)", title = "Rank by control EPKM value") +
+  scale_fill_manual(values = colors, 
+                    labels = c("control", "KD"),
+                    name = "") +
+  theme_classic() +
+  theme(legend.position = c(0.82, 0.95),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.background = element_rect(fill = "transparent", color = NA),
+        legend.text = element_text(size = 9),
+        legend.title = element_text(size = 9),
+        legend.key.size = unit(0.3, "cm"),
+        aspect.ratio = 2/1)
+
+
+
+ggsave("output/Ste06.nsites_Quartile_binByEPKM_2groups.pdf", plot = nsites_Quartile_binByEPKM_2groups, device = "pdf", width = 8, height = 6)
+
+
+
+
+
+```
+
+
+
+
+
+
+
+## nsites bins cut by SCR nsites value
+
+### SCR, shRNA33, shRNA37
+
+
+```{r}
+
+gene_nsites_bin <- gene_nsites %>%  
+  rename_all(~ gsub("_nsites", "", .)) %>%
+  mutate_all(~ ifelse(is.na(.), 0, .)) %>%
+  arrange(desc((SCR_Rep1 + SCR_Rep2 + SCR_Rep3)/3))
+
+# Calculate the number of rows in each bin 
+rows_per_bin <- nrow(gene_nsites_bin) / 4
+
+# Print the number of genes in each quartile
+print(paste("Each quartile genes number:", rows_per_bin))
+
+
+# Add a new "bin" column based on the row index
+gene_nsites_bin <- gene_nsites_bin %>%
+  mutate(bin = as.integer((row_number() - 1) / rows_per_bin) + 1)
+
+# Reshape the data to long format
+long_data <- gene_nsites_bin %>%
+  gather(key = "sample_Rep", value = "nsites", SCR_Rep1, SCR_Rep2, SCR_Rep3, shRNA33_Rep1, shRNA33_Rep2, shRNA33_Rep3, shRNA37_Rep1, shRNA37_Rep2, shRNA37_Rep3) %>%
+  mutate(sample_group = case_when(
+    grepl("SCR", sample_Rep) ~ "SCR",
+    grepl("shRNA33", sample_Rep) ~ "shRNA33",
+    grepl("shRNA37", sample_Rep) ~ "shRNA37"
+  ))
+
+# Perform pairwise Wilcoxon rank-sum tests
+pairwise_comparisons <- long_data %>%
+  group_by(bin) %>%
+  pairwise_wilcox_test(nsites ~ sample_group, p.adjust.method = "bonferroni")
+
+# Filter the significant comparisons (e.g., p-value < 0.05)
+nsites_3_significant_comparisons <- pairwise_comparisons %>%
+  filter(p.adj < 0.05)
+
+print(nsites_3_significant_comparisons)
+
+# Calculate the average EPKM value for each sample group in each bin
+average_nsites <- long_data %>%
+  group_by(bin, sample_group) %>%
+  summarize(mean_nsites = mean(nsites),
+            median_nsites = median(nsites),
+            .groups = "drop")
+
+# Print the average EPKM values
+print(average_nsites)
+
+
+# save as excel
+library(openxlsx)
+
+# Create a new workbook
+wb <- createWorkbook()
+
+# Add the data frames as sheets to the workbook
+## sheet1
+addWorksheet(wb, "gene_nsites")
+writeData(wb, "gene_nsites", gene_nsites)
+
+## sheet2
+addWorksheet(wb, "nsites_bins")
+writeData(wb, "nsites_bins", long_data)
+
+## sheet3
+addWorksheet(wb, "3groups_significant")
+writeData(wb, "3groups_significant", nsites_3_significant_comparisons)
+
+## sheet4
+addWorksheet(wb, "average_nsites")
+writeData(wb, "average_nsites", average_nsites)
+
+# Save the workbook to a file
+saveWorkbook(wb, "output/Step06.nsites_Quartile_binBynsites_3groups.xlsx", overwrite = TRUE)
+
+
+
+
+
+# Generate the box plot
+colors <- c("#C1C0C0", "#76D7FF", "#1796FF")
+
+
+nsites_Quartile_binBynsites_3groups <- ggplot(long_data, aes(x = as.factor(bin), y = log2(nsites + 1), fill = sample_group)) +
+  geom_boxplot(color = "grey50", outlier.size = 0.5) +
+  labs(x = "Quartile", y = "log2(nsites + 1)", title = "Rank by control nsites value") +
+  scale_fill_manual(values = colors, 
+                    labels = c("control", "KD-33", "KD-37"),
+                    name = "") +
+  theme_classic() +
+  theme(legend.position = c(0.82, 0.95),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.background = element_rect(fill = "transparent", color = NA),
+        legend.text = element_text(size = 9),
+        legend.title = element_text(size = 9),
+        legend.key.size = unit(0.3, "cm"),
+        aspect.ratio = 2/1)
+
+
+
+ggsave("output/Step06.nsites_Quartile_binBynsites_3groups.pdf", plot = nsites_Quartile_binBynsites_3groups, device = "pdf", width = 8, height = 6)
+
+
+
+
+
+
+```
+
+
+### Bins analysis but between 2 groups scr vs. sh (33+ 37)
+
+
+```{r}
+# Reshape the data to long format
+long_data <- gene_nsites_bin %>%
+  gather(key = "sample_Rep", value = "nsites", SCR_Rep1, SCR_Rep2, SCR_Rep3, shRNA33_Rep1, shRNA33_Rep2, shRNA33_Rep3, shRNA37_Rep1, shRNA37_Rep2, shRNA37_Rep3) %>%
+  mutate(sample_group = case_when(
+    grepl("SCR", sample_Rep) ~ "SCR",
+    grepl("shRNA33", sample_Rep) ~ "shRNA33",
+    grepl("shRNA37", sample_Rep) ~ "shRNA37"
+  )) %>%
+  mutate(combined_group = case_when(
+    sample_group == "SCR" ~ "SCR",
+    sample_group %in% c("shRNA33", "shRNA37") ~ "shRNA"
+  ))
+
+# Perform pairwise Wilcoxon rank-sum tests
+pairwise_comparisons <- long_data %>%
+  group_by(bin) %>%
+  pairwise_wilcox_test(nsites ~ combined_group, p.adjust.method = "bonferroni", pool.sd = FALSE)
+
+# Filter the significant comparisons (e.g., p-value < 0.05)
+nsites_2_significant_comparisons <- pairwise_comparisons %>%
+  filter(p.adj < 0.05)
+
+print(nsites_2_significant_comparisons)
+
+
+
+# Calculate the average EPKM value for each sample group in each bin
+average_nsites <- long_data %>%
+  group_by(bin, combined_group) %>%
+  summarize(mean_nsites = mean(nsites),
+            median_nsites = median(nsites),
+            .groups = "drop")
+
+# Print the average EPKM values
+print(average_nsites)
+
+
+# save as excel
+library(openxlsx)
+
+# Create a new workbook
+wb <- createWorkbook()
+
+# Add the data frames as sheets to the workbook
+## sheet1
+addWorksheet(wb, "gene_nsites")
+writeData(wb, "gene_nsites", gene_nsites)
+
+## sheet2
+addWorksheet(wb, "nsites_bins")
+writeData(wb, "nsites_bins", long_data)
+
+## sheet3
+addWorksheet(wb, "2groups_significant")
+writeData(wb, "2groups_significant", nsites_2_significant_comparisons)
+
+## sheet4
+addWorksheet(wb, "average_nsites")
+writeData(wb, "average_nsites", average_nsites)
+
+# Save the workbook to a file
+saveWorkbook(wb, "output/Step06.nsites_Quartile_binBynsites_2groups.xlsx", overwrite = TRUE)
+
+
+
+
+
+# Generate the box plot
+colors <- c("#C1C0C0", "#1796FF")
+
+
+nsites_Quartile_binBynsites_2groups <- ggplot(long_data, aes(x = as.factor(bin), y = log2(nsites + 1), fill = combined_group)) +
+  geom_boxplot(color = "grey50", outlier.size = 0.5) +
+  labs(x = "Quartile", y = "log2(nsites + 1)", title = "Rank by control nsites value") +
+  scale_fill_manual(values = colors, 
+                    labels = c("control", "KD"),
+                    name = "") +
+  theme_classic() +
+  theme(legend.position = c(0.82, 0.95),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.background = element_rect(fill = "transparent", color = NA),
+        legend.text = element_text(size = 9),
+        legend.title = element_text(size = 9),
+        legend.key.size = unit(0.3, "cm"),
+        aspect.ratio = 2/1)
+
+
+ggsave("output/Step06.nsites_Quartile_binBynsites_2groups.pdf", plot = nsites_Quartile_binBynsites_2groups, device = "pdf", width = 8, height = 6)
+
+
+
+save(gene_nsites_bin, file = "output/Step.06.nsites_SCR_shRNA_nsitesbin.rdata")
+
+```
+
+
+
+
+
+
+
+
+
+

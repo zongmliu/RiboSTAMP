@@ -1,0 +1,1315 @@
+---
+title: "Step02.C2U_SAILOR"
+author: "Vu Lab"
+date: "2023-05-02"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# 1. SAILOR
+
+Robust single-cell discovery of RNA targets of RNA-binding proteins and ribosomes
+https://www.nature.com/articles/s41592-021-01128-0#data-availability
+
+YeoLab/sailor
+https://github.com/YeoLab/sailor
+
+## server
+zongmin@cedar.computecanada.ca
+
+
+## 1.1 Install
+SAILOR sailor-1.2.0.tar.gz
+
+It requires a BAM-formatted file of the sequence alignments, a FASTA-formatted reference genome sequence (of any organism or cell-type), and a BED3-formatted file of known SNPs. 
+
+
+
+Download and unzip the last stable version: link https://github.com/YeoLab/sailor/archive/refs/tags/v1.2.0.tar.gz
+untar and ensure that the following directories are in your $PATH: CWL-SINGULARITY-pipeline-building-code/cwl, CWL-SINGULARITY-pipeline-building-code/py
+Install the following softwares with conda: python=2.7 samtools=1.3.1, bcftools=1.2, pysam, bedtools, pybedtools, pandas, numpy, scipy.
+Install cwltool with pip: pip install cwltool
+Try running the cwl documents using the example yaml file: cwltool cwl/wf_rnaediting2strands.cwl example/ce11_example.yaml (this example is from an ADAR (A>G) dataset and while ct: true will work for C to U/T, you may not see any edits using the example file).
+
+
+```
+cd /home/zongmin/scratch/Ribostamp/Sailor
+
+
+wget https://github.com/YeoLab/sailor/archive/refs/tags/v1.2.0.tar.gz
+tar -xvf v1.2.0.tar.gz
+
+# Add $PATH: CWL-SINGULARITY-pipeline-building-code/cwl,CWL-SINGULARITY-pipeline-building-code/py
+vim ~/.bashrc
+export PATH="/home/zongmin/scratch/Ribostamp/Sailor/sailor-1.2.0/CWL-SINGULARITY-pipeline-building-code/cwl:$PATH"
+export PATH="/home/zongmin/scratch/Ribostamp/Sailor/sailor-1.2.0/CWL-SINGULARITY-pipeline-building-code/py:$PATH"
+export PATH="/home/zongmin/scratch/Ribostamp/Sailor/sailor-1.2.0/CWL-SINGULARITY-pipeline-building-code/bin:$PATH"
+
+
+source ~/.bashrc
+
+# Install the following softwares with conda: python=2.7 samtools=1.3.1, bcftools=1.2, pysam, bedtools, pybedtools, pandas, numpy, scipy.
+
+conda create -n sailor python=2.7 samtools=1.3.1 bcftools=1.2 pysam bedtools pybedtools pandas numpy scipy
+
+conda activate sailor
+
+pip install cwltool
+
+
+```
+
+
+
+## 1.2 SNP file (we download GRCh38 SNP bed file from ucsc)
+
+To download a BED3-formatted file of known SNPs for Homo sapiens (human) in the GRCh38 reference assembly, you can follow these steps:
+
+Go to the UCSC Genome Browser website at https://genome.ucsc.edu/
+Click on the "Genome Browser" link on the top left corner of the homepage.
+Select "Human" as the genome assembly.
+Select "GRCh38" as the genome build.
+Click on the "Tables" dropdown menu and select "SNPs". https://genome.ucsc.edu/cgi-bin/hgTables?hgsid=1606346645_ERp0Bf7zITSPNjhJBUAeg9JHSQrU 
+
+Under the "SNP table options" section, select "Common SNPs" as the track.
+Under the "Output format" section, select "BED" as the output format.
+Under the "Region" section, select "Genome" and leave the default values for the rest of the options.
+Click on the "Get Output" button to download the BED3-formatted file of known SNPs for Homo sapiens (human) in the GRCh38 reference assembly.
+Note that this will download a file containing all common SNPs in the GRCh38 reference assembly. If you are only interested in a specific subset of SNPs, you can customize your query by selecting different options in the "SNP table options" section.
+
+
+
+```{r}
+knitr::include_graphics("Figure_Markdown/dbSNP155_bed.png")
+```
+
+
+
+
+$ less -S GRCh38_commonSNPs155.bed3
+
+```
+cd  /home/zongmin/scratch/Ribostamp/Sailor/sailor-1.2.0/CWL-SINGULARITY-pipeline-building-code/input
+
+# In terminal, uncompresses the dbSNP155.bed.gz file using zcat, extracts the first three columns using cut, and saves the output to a new file named GRCh38_commonSNPs155.bed3
+
+zcat dbSNP155.bed.gz | cut -f1-3 > GRCh38_commonSNPs155.bed3
+
+#  remove the chr string from the chromosome names in the bed file, because the latest GRCh38_genome.fasta don't have chr before the number
+
+sed -i 's/^chr//' GRCh38_commonSNPs155.bed3
+
+
+
+```
+
+```{r}
+knitr::include_graphics("Figure_Markdown/SNP_bed3.png")
+```
+
+
+
+## 1.3 run
+
+### 1.3.1 input and parameters (json file)
+
+all of the scripts are updated to call C-U(T) candidates. You can use the 'ct: true' flag, see the example below:
+
+https://github.com/YeoLab/sailor/blob/master/example/example.json
+
+cwltool cwl/wf_rnaediting2strands.cwl example/ce11_example.json
+
+
+#### test run 
+
+$ cwltool cwl/wf_rnaediting2strands.cwl SCR_Rep1.json
+
+$ vi SCR_Rep1.json
+
+```
+#!/usr/bin/env sailor
+
+###############################################################################
+# YOU NEED TO PROVIDE THE FOLLOWING THREE NECESSARY PARAMETERS
+
+
+# aligned BAM file
+input_bam:
+  class: File
+  path: /home/zongmin/scratch/Ribostamp/BAM/SCR_Rep1.bam
+
+# reference file
+reference:
+  class: File
+  path: /home/zongmin/scratch/Ribostamp/ref/genome.fasta
+
+# known snps file
+known_snp:
+  class: File
+  path: /home/zongmin/scratch/Ribostamp/Sailor/sailor-1.2.0/CWL-SINGULARITY-pipeline-building-code/input/GRCh38_commonSNPs155.bed3
+
+# call C-U(T) candidates
+ct: true
+
+
+# determines whether or not this is a single or paired-end library. Our scRNAseq is paired-end.
+single_end: false
+
+
+min_variant_coverage: 5
+alpha: 0
+beta: 0
+edit_fraction: 0.01
+
+
+
+###############################################################################
+# ALL PARAMETERS BEYOND THIS ARE ADVANCED AND OPTIONAL
+#
+# leave as is unless you know you have a specific need to adjust something
+#
+# if you need to adjust something:
+#
+# 1) uncomment the relevant "key: value" line,
+# 2) do not add any space or tab at the beginning ot that line,
+# 3) modify the value to fit your needs
+#
+# for example if your bam is paired ends as opposed to single ends:
+# change the following 2 lines:
+#
+#    |
+#    |# determines whether or not this is a single or paired-end library
+#    |#single_end: true
+#
+# this way:
+#
+#    |
+#    |
+#    |# determines whether or not this is a single or paired-end library
+#    |single_end: false
+#    |
+#
+
+
+# if this is a TruSeq reverse stranded library, set to true
+#reverse_stranded_library: true
+
+
+# determines whether or not this is a single or paired-end library
+#single_end: true
+
+
+# determines the minimal number of nt a read can overhang a junction
+#junction_overhang: 10
+
+
+# determines the distance from the end of the read that a mutation can occur
+#edge_mutation: 5
+
+
+# the maximum number of non-AG mutations that can occur in a read before it's filtered out.
+#non_ag: 1
+
+
+# minimum read coverage supporting a variant at any position
+#min_variant_coverage: 5
+
+
+# choose "DP" to calculate minimum coverage based on all postfiltered reads,
+# or "DP4" to calculate coverage based on postfiltered+quality filtered reads.
+# See: http://samtools.sourceforge.net/mpileup.shtml for differences between DP and DP4
+#dp: DP4
+
+
+# Adjust these parameters to either add a pseudocount to G (alpha) or A (beta).
+# Useful for relaxing parameters on lower coverage data.
+#alpha: 0
+#beta: 0
+
+
+# hard filter on minimum edit fraction
+#edit_fraction: 0.01
+
+
+# keep all (100%) edited sites as true editing events.
+#keep_all_edited: false
+
+
+# skip_duplicate_removal:
+#skip_duplicate_removal: false
+
+```
+
+
+
+
+
+
+### 1.3.2 generate_json.sh
+
+$ vi generate_json.sh
+
+```
+#!/bin/bash
+
+# define function to generate json file for a given BAM file
+generate_json() {
+  local bam_file="$1"
+  local bam_basename=$(basename "$bam_file" .bam)
+  
+  cat << EOF > "${bam_basename}.json"
+#!/usr/bin/env sailor
+
+###############################################################################
+# YOU NEED TO PROVIDE THE FOLLOWING THREE NECESSARY PARAMETERS
+
+
+# aligned BAM file
+input_bam:
+  class: File
+  path: ${bam_file}
+
+# reference file
+reference:
+  class: File
+  path: /home/zongmin/scratch/Ribostamp/ref/genome.fasta
+
+# known snps file
+known_snp:
+  class: File
+  path: /home/zongmin/scratch/Ribostamp/Sailor/sailor-1.2.0/CWL-SINGULARITY-pipeline-building-code/input/GRCh38_commonSNPs155.bed3
+
+# call C-U(T) candidates
+ct: true
+
+# determines whether or not this is a single or paired-end library. Our scRNAseq is paired-end.
+single_end: false
+
+min_variant_coverage: 5
+alpha: 0
+beta: 0
+edit_fraction: 0.01
+EOF
+}
+
+# set the directory where the BAM files are stored
+bam_dir="/home/zongmin/scratch/Ribostamp/BAM"
+
+# loop through all BAM files in the directory and generate .json files
+for bam_file in "$bam_dir"/*.bam
+do
+  generate_json "$bam_file"
+done
+
+```
+
+Outputs Format of the BED file:
+chromosome
+start (0-based) index of an editing site
+end (open) index of an editing site
+unique name containing information about coverage|variant type|edit% (60|C>T|0.5 corresponds to an C>T (+) site covered by 60 reads that is ~50% edited)
+confidence score
+strand
+
+
+
+$ less -S SCR_Rep1.fwd.C2U.bed
+
+```{r}
+knitr::include_graphics("Figure_Markdown/SCR_Rep1.fwd.C2U.bed.png")
+```
+
+
+
+$ less -S SCR_Rep1.rev.C2U.bed
+
+```{r}
+knitr::include_graphics("Figure_Markdown/SCR_Rep1.rev.C2U.bed.png")
+```
+
+
+### 1.3.3 cwltool cwl/wf_rnaediting2strands.cwl ./*.json
+
+submit array jobs
+
+This step takes longtime, so, submit together
+
+$ vi SAILOR_C2U.sh
+$ sbatch SAILOR_C2U.sh
+
+```
+#!/bin/bash
+#SBATCH --mem=100G
+#SBATCH -c 12
+#SBATCH -t 0-24:00:00
+#SBATCH -a 1-9
+
+
+#adjust number of arrays to correspond to number of files to process 
+#depending on the size of your files, you may need to adjust the amount of RAM used
+
+# activate the sailor environment
+
+source activate sailor 
+
+cd /home/zongmin/scratch/Ribostamp/Sailor/sailor-1.2.0/CWL-SINGULARITY-pipeline-building-code
+
+
+# can change ls to json files
+
+file=$(ls *.json | sed -n ${SLURM_ARRAY_TASK_ID}p)   
+
+
+
+echo 'processing' $file
+
+echo 'Started at' `date +"%D %H:%M"`
+
+cwltool cwl/wf_rnaediting2strands.cwl $file
+
+echo 'Ended at' `date +"%D %H:%M"`
+
+
+```
+
+
+
+
+
+## 1.4 IGV 
+https://software.broadinstitute.org/software/igv/download
+
+You can load these BED files onto IGV and see if your gene of interest is edited. For a more global viewpoint, you will need to filter this BED file based on the 'confidence score' (tab 5) using anything that can sort/filter a tabbed file. Then you can look at these filtered sites on IGV.
+
+
+
+
+
+
+
+
+
+## 1.5 ε score and C-to-U frequency
+
+
+We describe an ‘ε score’ fraction formula: 
+
+
+```{r}
+knitr::include_graphics("Figure_Markdown/score.png")
+```
+
+what the different between ε score and C-to-U frequency ( C-to-U frequency = total read mapping to this C position reads/ read mapping to this position reads that happen C-U edit) ?
+
+The ε score and C-to-U frequency are both metrics used to evaluate RNA editing events, specifically C-to-U conversions, within a genomic region, but they are calculated using different formulas and have different interpretations.
+
+The C-to-U frequency is calculated by dividing the number of reads that show a C-to-U conversion at a specific position by the total number of reads that map to that same position. It is a measure of the proportion of reads that show a C-to-U conversion relative to all reads that map to a specific position, and it provides information about the frequency of the RNA editing event at a particular position.
+
+In contrast, the ε score takes into account read coverage, edit frequency, and edit potential across a window of genomic positions that contain Cs. It is calculated by summing the C-to-U read conversions at each position within a given coordinate window and dividing it by the total coverage of all Cs found within that window. The ε score provides information about the potential for RNA editing events to occur within a specific genomic region, taking into account not only the frequency of C-to-U conversions but also the overall C-richness of the region and the read coverage.
+
+In summary, the C-to-U frequency measures the frequency of RNA editing events at a specific position, while the ε score measures the potential for RNA editing events to occur within a broader genomic region.
+
+
+
+# 2. Use MetaPlotR annotate C2U_SAILOR results
+
+Outputs Format of the BED file:
+chromosome
+start (0-based) index of an editing site
+end (open) index of an editing site
+unique name containing information about coverage|variant type|edit% (60|C>T|0.5 corresponds to an C>T (+) site covered by 60 reads that is ~50% edited)
+confidence score
+strand
+
+
+
+
+## MetaPlotR
+
+https://github.com/olarerin/metaPlotR
+
+MetaPlotR is a Perl/R pipeline for creating metagene plots. A metagene is a density plot or histogram of sites of interest (e.g. protein binding sites or RNA modifications) along a simplified transcript model containing a 5’UTR, coding sequence and 3’UTR.
+
+```
+git clone https://github.com/olarerin/metaPlotR.git
+
+```
+
+### Prepare primary data
+
+#### Create query bed file
+
+A six-column BED file (i.e. BED6) is required (see here for specifications -- Note: columns 4 and 5 can be arbitrary). We uses a BED file of C2U sites generated from SAILOR.
+
+NOTE: MetaPlotR expects a bed file with 0-based single nucleotide coordinates.
+
+cat SCR_Rep1.fwd.bed  SCR_Rep1.rev.bed > SCR_Rep1.bed
+sort -k1,1 -k2,2n SCR_Rep1.bed > SCR_Rep1.sorted.bed
+
+The -k1,1 option specifies that the sorting should be based on the first column only. 
+The -k2,2n option specifies that if two entries in the first column are the same, then the sorting should be based on the second column numerically (i.e., as a number). The -n option is used to tell sort to treat the second column as a number rather than a string.
+
+The resulting "SCR_Rep1.sorted.bed" file will have the same format as the original "SCR_Rep1.bed" file, but with the entries sorted by chromosome and position.
+
+
+
+$ vi sort_bed.sh
+
+```
+#!/bin/bash
+
+cd /home/zongmin/scratch/Ribostamp/metaPlotR
+cp -r /home/zongmin/scratch/Ribostamp/Sailor/sailor-1.2.0/CWL-SINGULARITY-pipeline-building-code/sailor_C2U_results ./
+
+
+# rename file C2U bed file
+for file in *".sorted.rmdup.readfiltered.formatted.varfiltered.snpfiltered.ranked"*; do mv -- "$file" "${file/.sorted.rmdup.readfiltered.formatted.varfiltered.snpfiltered.ranked/}"; done
+
+
+# Read sample names from bed.lst
+ls *.bed > bed.lst
+
+samples=($(awk -F'[_.]' '{print $1"_"$2}' bed.lst | uniq))
+
+# Merge forward and reverse BED files for each sample
+for s in "${samples[@]}"
+do
+  cat "${s}.fwd.bed" "${s}.rev.bed" > "${s}.bed"
+done
+
+# Sort merged BED files for each sample
+for s in "${samples[@]}"
+do
+  sort -k1,1 -k2,2n "${s}.bed" > "${s}.sorted.bed"
+done
+
+
+
+```
+
+
+
+
+### genome and annotation file
+
+The difference in chromosome naming conventions between Ensembl and UCSC is due to historical reasons and different conventions used by different genome assemblies.
+
+Ensembl don't have chr before chromosome.
+
+If your genes.gtf file contains commented lines that start with #, you can exclude them from being modified by sed by adding a pattern to exclude lines that match the # character at the beginning of the line.
+
+
+
+### Pre-process data
+
+1.make_annot_bed.pl
+
+make_annot_bed.pl creates a master annotation file (bed format) of every nucleotide in the transcriptome. The script is supplied with the locations of the genome directory (chroms/) and the gene prediction table (hg19_gencode.genePred):
+
+```
+tar -zxvf chromFa.tar.gz
+cat *.fa > genome.fasta
+
+perl make_annot_bed.pl --genomeDir chroms/ --genePred annot/hg19_gencode_v19.genePred > hg19_annot.bed
+
+# Sort the master annotation file using the unix sort command
+
+sort -k1,1 -k2,2n hg19_annot.bed > hg19_annot.sorted.bed
+
+```
+
+The purpose of the make_annot_bed.pl script is to generate a BED file that annotates every genic nucleotide of a genome based on a gene annotation file. The BED file will contain the following columns:
+
+1.Chromosome name
+2.Start position (0-based)
+3.End position (1-based)
+4.Transcript ID, gene name, feature (exon, CDS, 5' UTR, or 3' UTR), and mRNA position, separated by a vertical bar
+5.Nucleotide
+6.Strand
+
+chr1    66999065        66999066        ENST00000237247.6|SGIP1|5utr|1  A       +
+chr1    66999066        66999067        ENST00000237247.6|SGIP1|5utr|2  G       +
+chr1    66999067        66999068        ENST00000237247.6|SGIP1|5utr|3  T       +
+
+
+
+
+The script loads the genomic sequence of each chromosome and the gene annotation information from the input files. It then iterates through each gene and its exons, labels each nucleotide as either 5' UTR, CDS, 3' UTR, or intron, and outputs the relevant information to the BED file.
+
+
+
+
+
+
+The purpose of the make_annot_bed.pl script is to generate a BED file that annotates every genic nucleotide of a genome based on a gene annotation file. The BED file will contain the following columns:
+
+Chromosome name
+Start position (0-based)
+End position (1-based)
+Transcript ID, gene name, feature (exon, CDS, 5' UTR, or 3' UTR), and mRNA position, separated by a vertical bar
+Nucleotide
+Strand
+The script takes two command-line arguments: genome.fasta and genes.gtf. genome.fasta is the genome file in FASTA format, and genes.gtf is the gene annotation file in gtf format.
+
+The script loads the genomic sequence of each chromosome and the gene annotation information from the input files. It then iterates through each gene and its exons, labels each nucleotide as either 5' UTR, CDS, 3' UTR, or intron, and outputs the relevant information to the BED file.
+
+
+
+
+2.size_of_cds_utrs.pl
+size_of_cds_utrs.pl creates a file cataloging the transcriptomic coordinates of the start and end sites of the transcript regions (i.e. 5’UTR, CDS and 3’UTR). It takes the sorted master annotation file as input (hg19_annot.sorted.bed) and outputs a region annotation file. The region annotation file is necessary for determining the distance of queried sites from the transcriptomic features (i.e. transcriptional start site, start codon, stop codon and transcript end).
+
+```
+perl size_of_cds_utrs.pl --annot hg19_annot.sorted.bed > region_sizes.txt
+
+```
+
+
+3.annotate_bed_file.pl 
+annotate_bed_file.pl annotates the user supplied BED file (demonstrated with m6a.sorted.bed) containing single nucleotide genomic coordinates of sites of interest. It serves as a wrapper for Bedtools Intersect and essentially labels every line in the user supplied BED file with the matching line (i.e. same coordinates) in the master annotation file (hg19_annot.sorted.bed). The outputted file is called the annotated query file.
+
+```
+perl annotate_bed_file.pl --bed m6a.sorted.bed --bed2 hg19_annot.sorted.bed > annot_m6a.sorted.bed
+perl annotate_bed_file.pl --bed pseudoU.sorted.bed --bed2 hg19_annot.sorted.bed > annot_pseudoU.sorted.bed
+
+```
+
+
+4.rel_and_abs_dist_calc.pl 
+rel_and_abs_dist_calc.pl identifies the region of the transcript in which the user supplied sites fall and converts the transcriptomic coordinates to metagene coordinates. Namely, sites that occur in the 5’UTR have a value from 0 to 1, where 0 and 1 represent the 5’ and 3’ ends of the 5’UTR, respectively. Similarly, sites in the CDS have a value from 1 to 2 and the 3’UTR 2 to 3. The script takes as input the annotated query file annot_miclip.cims.bed and the region annotation file utr_cds_ends.txt. The outputted distance measure file contains all the values needed to plot the metagenes.
+
+```
+perl rel_and_abs_dist_calc.pl --bed annot_m6a.sorted.bed --regions region_sizes.txt > m6a.dist.measures.txt
+perl rel_and_abs_dist_calc.pl --bed annot_pseudoU.sorted.bed --regions region_sizes.txt > pseudoU.dist.measures.txt
+
+```
+
+
+
+### Our data
+
+
+
+
+```
+## step 1: make_annot_bed.pl
+
+# add chr before chromosome in gtf file
+sed -i '/^#/! s/^/chr/' genes.gtf
+
+
+# http://genomewiki.ucsc.edu/index.php/Genes_in_gtf_or_gff_format
+# -genePredExt - create a extended genePred, including frame information and gene name
+# -geneNameAsName2 - if specified, use gene_name for the name2 field instead of gene_id.
+gtfToGenePred -genePredExt -geneNameAsName2 genes.gtf GRCh38.genePredExt
+mv GRCh38.genePredExt GRCh38.genePred
+
+# since our GRCh38.genePredExt is a little different from the hg19.genePred format, so change the make_anno_bed.pl to make_annot_bed_GRCh38.pl
+
+# Split line and assign variables
+  my @temp = split(/\t/, $line);
+  my ($transcript_ID, $chr, $strand) = @temp[0..2];
+  my ($txStart, $txEnd, $cdsStart, $cdsEnd) = @temp[3..6];
+  my $exonCount = $temp[7];
+  my @exonFrame = split(/,/, $temp[-1]);
+  my @exon_starts = split (/,/, $temp[8]);
+  my @exon_ends = split (/,/, $temp[9]);
+  my $gene_name = $temp[11];
+
+
+
+# deal with the genome.fasta 
+cd /home/zongmin/scratch/Ribostamp/metaPlotR/genome
+sed 's/^>/&chr/' genome.fasta > genome_with_chr.fasta
+
+# split genome.fasta to individual chr. https://docs.alliancecan.ca/wiki/Kentutils
+module spider kentutils/20180716
+# split the genome_with_chr.fasta 
+faSplit byName genome_with_chr.fasta chr
+
+
+# make_annot_bed
+conda activate Bullseye
+perl make_annot_bed_GRCh38.pl --genomeDir genome/ --genePred annot/GRCh38.genePred > GRCh38_annot.bed
+
+# Sort the master annotation file using the unix sort command
+sort -k1,1 -k2,2n GRCh38_annot.bed > GRCh38_annot.sorted.bed
+
+
+
+
+
+## step 2:size_of_cds_utrs.pl
+
+cp size_of_cds_utrs.pl sailor_C2U_sorted_bed/
+
+perl size_of_cds_utrs.pl --annot GRCh38_annot.sorted.bed > region_sizes.txt
+
+cp region_sizes.txt sailor_C2U_sorted_bed/
+
+
+
+## step 3:annotate_bed_file.pl 
+
+# add chr before chromosome in .sorted.bed file
+cd /home/zongmin/scratch/Ribostamp/metaPlotR/sailor_C2U_sorted_bed
+for f in ./*.sorted.bed; do sed -i '/^#/! s/^/chr/' "$f"; done
+
+
+perl annotate_bed_file.pl --bed SCR_Rep1.sorted.bed --bed2 GRCh38_annot.sorted.bed > annot_SCR_Rep1.sorted.bed
+
+
+
+
+## step 4: rel_and_abs_dist_calc.pl
+perl rel_and_abs_dist_calc.pl --bed annot_SCR_Rep1.sorted.bed --regions region_sizes.txt > SCR_Rep1.dist.measures.txt
+
+```
+
+
+
+$ vi annotate_metagene_cord.sh
+
+```
+#!/bin/bash
+#SBATCH --mem=60G
+#SBATCH -c 8
+#SBATCH -t 0-4:00:00
+#SBATCH -a 1-9
+
+
+#adjust number of arrays to correspond to number of files to process 
+#depending on the size of your files, you may need to adjust the amount of RAM used
+
+# activate the environment
+
+source activate Bullseye
+
+cd /home/zongmin/scratch/Ribostamp/metaPlotR/sailor_C2U_sorted_bed
+
+
+# can change ls to sorted.bed files
+
+file=$(ls *.sorted.bed | sed -n ${SLURM_ARRAY_TASK_ID}p)   
+
+STEM=${file%.sorted.bed}
+
+echo 'processing' $file
+
+echo 'Started at' `date +"%D %H:%M"`
+
+# step3_annotate_bed_file
+perl annotate_bed_file.pl --bed $file --bed2 ../GRCh38_annot.sorted.bed > annot_$file
+
+# step 4.rel_and_abs_dist_calc.pl
+perl rel_and_abs_dist_calc.pl --bed annot_$file --regions region_sizes.txt > $STEM.dist.measures.txt
+
+
+echo 'Ended at' `date +"%D %H:%M"`
+
+
+```
+
+
+
+
+
+## TranscriptID_Geneid_Genename
+
+```{r}
+library(tidyverse)
+# Geneid_TranscriptID
+Geneid_TranscriptID <- read.delim("data/Geneid_TranscriptID.txt", 
+                                  header = FALSE, 
+                                  col.names = c("TranscriptID", "Geneid" ))
+
+
+# Genename_TranscriptID
+Genename_TranscriptID <- read.delim("data/Genename_TranscriptID.txt", 
+                                  header = FALSE, 
+                                  col.names = c("TranscriptID", "Genename" ))
+
+TranscriptID_Geneid_Genename <- left_join(Geneid_TranscriptID,Genename_TranscriptID, by = "TranscriptID" )
+
+
+Geneid_Genename <- TranscriptID_Geneid_Genename %>%
+  dplyr::select(Geneid,Genename) %>%
+  distinct()
+
+
+save(Geneid_TranscriptID, Genename_TranscriptID,Geneid_Genename, TranscriptID_Geneid_Genename, file = "output/Step02.TranscriptID_Geneid_Genename.rdata")
+
+
+```
+
+
+# Annotate Sailor results
+
+Homo_sapiens.GRCh38.109.gtf download from Ensemble, the gene feature: CDS, exon, five_prime_utr, gene, start_codon, stop_codon, three_prime_utr, transcript. However, the Homo_sapiens.GRCh38.109.gtf file does not explicitly provide information about intron.
+So now we need to use Homo_sapiens.GRCh38.109.gtf to annotate sailor.bed sites with another three column: Geneid, Genename, Genefeature.
+
+In the original salior.bed annotate file, the author just annotate sites with CDS, five_prime_utr, three_prime_utr, the rest sites treat as ncRNA.
+
+The salior.bed file contain:chr, start, end, strand, confidence_score, coverage, editRatio. We need to calculate and annotate these bed file to add gene_id, gene_name, and gene_fearture columns using genes.gtf file. So for the final gene_fearture column content should be: CDS, exon, five_prime_utr, three_prime_utr,intronic, intergenic, others(if not annotate by genes.gtf then treat as others).
+
+The genes.gtf file provides information about the genomic features that are annotated for a particular genome assembly: CDS, exon, five_prime_utr, gene, start_codon, stop_codon, three_prime_utr, transcript. However, the genes.gtf file does not explicitly provide information about intronic and intergenic regions.
+
+To identify intronic and intergenic regions from the genes.gtf file, we need to perform some additional processing. This is because intronic and intergenic regions are defined based on the intervals that are not covered by exons or other annotated features, which is not directly provided in the genes.gtf file.
+
+
+
+
+
+Ribosomes combine with mRNA, mRNA carries the genetic information from DNA to the ribosomes. It contains several features, including:CDS,5'utr, 3'utr. Introns and intergenic regions are specific to the DNA genome and are not typically present in mature mRNA molecules that undergo translation. During translation, the ribosome interacts primarily with the CDS of the mRNA to synthesize proteins.  
+
+In our Ribo-STAMP results, our genome reference genome is GRCh38.109, but I fail to import the annotation file.
+So, I use the IGV original Human(GRCh38/hg38) to visualize the gene, there are many sites in the Introns.
+So now we need to annotate sites with: CDS, 5'utr, 3'utr, intro, intergenic, other. Using piechart of % of distribution: CDS, 5'utr, 3'utr, intro, other. 
+
+gene NAP1L1 has around 100 edit sites, and some sites located in the intro region, gene RPL31 has around 50 sites.
+
+We can generate a graph to show target genes edit sites with feature (CDS, 5'utr, 3'utr, intro, other), then use IGV to view them.
+
+
+## annotate sailor.bed file using genes.gtf first
+the genes.gtf gene feature:
+CDS
+exon
+five_prime_utr
+gene
+start_codon
+stop_codon
+three_prime_utr
+transcript 
+
+
+vi annotate_CDS_utr.sh
+
+```
+#!/bin/bash
+#SBATCH --mem=60G
+#SBATCH -c 8
+#SBATCH -t 0-4:00:00
+
+module load StdEnv/2020 bedtools/2.30.0
+
+cd /home/zongmin/scratch/Ribostamp/metaPlotR/sailor_C2U_results
+ 
+## SCR
+
+sort -k1,1 -k2,2n SCR_Rep1.bed > SCR_Rep1_sorted.bed
+bedtools intersect -a SCR_Rep1_sorted.bed -b genes.gtf -wa -wb > SCR_Rep1.annotated.bed
+cut -f1,2,3,4,5,6,9,15 SCR_Rep1.annotated.bed > SCR_Rep1.annotated.filtered.bed
+awk -F'\t' 'BEGIN {OFS=FS} {match($8, /gene_id "([^"]+)";/, Geneid); match($8, /gene_name "([^"]+)";/, Genename); print $1, $2, $3, $4, $5, $6, $7, Geneid[1], Genename[1]}' SCR_Rep1.annotated.filtered.bed > SCR_Rep1_annotate.bed
+
+
+sort -k1,1 -k2,2n SCR_Rep2.bed > SCR_Rep2_sorted.bed
+bedtools intersect -a SCR_Rep2_sorted.bed -b genes.gtf -wa -wb > SCR_Rep2.annotated.bed
+cut -f1,2,3,4,5,6,9,15 SCR_Rep2.annotated.bed > SCR_Rep2.annotated.filtered.bed
+awk -F'\t' 'BEGIN {OFS=FS} {match($8, /gene_id "([^"]+)";/, Geneid); match($8, /gene_name "([^"]+)";/, Genename); print $1, $2, $3, $4, $5, $6, $7, Geneid[1], Genename[1]}' SCR_Rep2.annotated.filtered.bed > SCR_Rep2_annotate.bed
+
+
+sort -k1,1 -k2,2n SCR_Rep3.bed > SCR_Rep3_sorted.bed
+bedtools intersect -a SCR_Rep3_sorted.bed -b genes.gtf -wa -wb > SCR_Rep3.annotated.bed
+cut -f1,2,3,4,5,6,9,15 SCR_Rep3.annotated.bed > SCR_Rep3.annotated.filtered.bed
+awk -F'\t' 'BEGIN {OFS=FS} {match($8, /gene_id "([^"]+)";/, Geneid); match($8, /gene_name "([^"]+)";/, Genename); print $1, $2, $3, $4, $5, $6, $7, Geneid[1], Genename[1]}' SCR_Rep3.annotated.filtered.bed > SCR_Rep3_annotate.bed
+
+
+
+
+## shRNA33
+
+sort -k1,1 -k2,2n shRNA33_Rep1.bed > shRNA33_Rep1_sorted.bed
+bedtools intersect -a shRNA33_Rep1_sorted.bed -b genes.gtf -wa -wb > shRNA33_Rep1.annotated.bed
+cut -f1,2,3,4,5,6,9,15 shRNA33_Rep1.annotated.bed > shRNA33_Rep1.annotated.filtered.bed
+awk -F'\t' 'BEGIN {OFS=FS} {match($8, /gene_id "([^"]+)";/, Geneid); match($8, /gene_name "([^"]+)";/, Genename); print $1, $2, $3, $4, $5, $6, $7, Geneid[1], Genename[1]}' shRNA33_Rep1.annotated.filtered.bed > shRNA33_Rep1_annotate.bed
+
+
+sort -k1,1 -k2,2n shRNA33_Rep2.bed > shRNA33_Rep2_sorted.bed
+bedtools intersect -a shRNA33_Rep2_sorted.bed -b genes.gtf -wa -wb > shRNA33_Rep2.annotated.bed
+cut -f1,2,3,4,5,6,9,15 shRNA33_Rep2.annotated.bed > shRNA33_Rep2.annotated.filtered.bed
+awk -F'\t' 'BEGIN {OFS=FS} {match($8, /gene_id "([^"]+)";/, Geneid); match($8, /gene_name "([^"]+)";/, Genename); print $1, $2, $3, $4, $5, $6, $7, Geneid[1], Genename[1]}' shRNA33_Rep2.annotated.filtered.bed > shRNA33_Rep2_annotate.bed
+
+
+sort -k1,1 -k2,2n shRNA33_Rep3.bed > shRNA33_Rep3_sorted.bed
+bedtools intersect -a shRNA33_Rep3_sorted.bed -b genes.gtf -wa -wb > shRNA33_Rep3.annotated.bed
+cut -f1,2,3,4,5,6,9,15 shRNA33_Rep3.annotated.bed > shRNA33_Rep3.annotated.filtered.bed
+awk -F'\t' 'BEGIN {OFS=FS} {match($8, /gene_id "([^"]+)";/, Geneid); match($8, /gene_name "([^"]+)";/, Genename); print $1, $2, $3, $4, $5, $6, $7, Geneid[1], Genename[1]}' shRNA33_Rep3.annotated.filtered.bed > shRNA33_Rep3_annotate.bed
+
+
+
+## shRNA37
+
+sort -k1,1 -k2,2n shRNA37_Rep1.bed > shRNA37_Rep1_sorted.bed
+bedtools intersect -a shRNA37_Rep1_sorted.bed -b genes.gtf -wa -wb > shRNA37_Rep1.annotated.bed
+cut -f1,2,3,4,5,6,9,15 shRNA37_Rep1.annotated.bed > shRNA37_Rep1.annotated.filtered.bed
+awk -F'\t' 'BEGIN {OFS=FS} {match($8, /gene_id "([^"]+)";/, Geneid); match($8, /gene_name "([^"]+)";/, Genename); print $1, $2, $3, $4, $5, $6, $7, Geneid[1], Genename[1]}' shRNA37_Rep1.annotated.filtered.bed > shRNA37_Rep1_annotate.bed
+
+
+sort -k1,1 -k2,2n shRNA37_Rep2.bed > shRNA37_Rep2_sorted.bed
+bedtools intersect -a shRNA37_Rep2_sorted.bed -b genes.gtf -wa -wb > shRNA37_Rep2.annotated.bed
+cut -f1,2,3,4,5,6,9,15 shRNA37_Rep2.annotated.bed > shRNA37_Rep2.annotated.filtered.bed
+awk -F'\t' 'BEGIN {OFS=FS} {match($8, /gene_id "([^"]+)";/, Geneid); match($8, /gene_name "([^"]+)";/, Genename); print $1, $2, $3, $4, $5, $6, $7, Geneid[1], Genename[1]}' shRNA37_Rep2.annotated.filtered.bed > shRNA37_Rep2_annotate.bed
+
+
+sort -k1,1 -k2,2n shRNA37_Rep3.bed > shRNA37_Rep3_sorted.bed
+bedtools intersect -a shRNA37_Rep3_sorted.bed -b genes.gtf -wa -wb > shRNA37_Rep3.annotated.bed
+cut -f1,2,3,4,5,6,9,15 shRNA37_Rep3.annotated.bed > shRNA37_Rep3.annotated.filtered.bed
+awk -F'\t' 'BEGIN {OFS=FS} {match($8, /gene_id "([^"]+)";/, Geneid); match($8, /gene_name "([^"]+)";/, Genename); print $1, $2, $3, $4, $5, $6, $7, Geneid[1], Genename[1]}' shRNA37_Rep3.annotated.filtered.bed > shRNA37_Rep3_annotate.bed
+
+```
+
+
+## 
+
+My sailor.bed file record C to U edit site (start): chr, start, end, edit, score, strand, Genefeature, Geneid, Genename.  the bed file content like these:
+1       14445   14446   25|G>A|0.04     0.785678141     -       exon    ENSG00000227232 WASH7P
+1       14445   14446   25|G>A|0.04     0.785678141     -       gene    ENSG00000227232 WASH7P
+1       14445   14446   25|G>A|0.04     0.785678141     -       transcript      ENSG00000227232 WASH7P
+1       14652   14653   60|C>T|0.5      1.0     +       gene    ENSG00000227232 WASH7P
+1       14652   14653   60|C>T|0.5      1.0     +       transcript      ENSG00000227232 WASH7P
+
+The Genefeature value: CDS, exon, five_prime_utr, gene, start_codon, stop_codon, three_prime_utr, transcript.
+
+
+import sailor.bed to Rstudio, and then add new column "Newfeature" based on "Genefeature".
+
+
+Now I want the "Newfeature" value be: CDS, five_prime_utr, three_prime_utr, intron, other. 
+Here is the way to get CDS:if one site is belong to CDS, then this site is CDS.
+Here is the way to get three_prime_utr:if one site is belong to three_prime_utr, then this site is three_prime_utr.
+Here is the way to get five_prime_utr:if one site is belong to five_prime_utr, then this site is five_prime_utr.
+Here is the way to get intron: if one site is belong to gene, but not exon,CDS,three_prime_utr,five_prime_utr, and then this site is intron.
+Here is the way to get other: if one site is not to CDS, 5'utr, 3'utr, intron, then this site is other.
+
+Now, it checks if Genefeature is "gene" and also ensures that it is not in any of the categories "exon", "CDS", "three_prime_utr", or "five_prime_utr". If these conditions are satisfied, the site is assigned the "intron" category.
+
+
+
+```{r eval=FALSE}
+# Define a function to determine the biotype based on Genefeature
+get_biotype <- function(Genefeature) {
+  if (Genefeature == "CDS") {
+    return("CDS")
+  } else if (Genefeature == "five_prime_utr") {
+    return("five_prime_utr")
+  } else if (Genefeature == "three_prime_utr") {
+    return("three_prime_utr")
+  } else if (Genefeature == "gene" & !(Genefeature %in% c("exon", "CDS", "three_prime_utr", "five_prime_utr"))) {
+    return("intron")
+  } else {
+    return("other")
+  }
+}
+
+```
+
+
+vi sailor_annotate.R
+
+Rscript sailor_annotate.R <input_file> <output_file_prefix>
+Rscript sailor_annotate.R SCR_Rep1_annotate.bed SCR_Rep1
+
+module load StdEnv/2020 r/4.2.2
+
+
+```
+#!/usr/bin/Rscript
+
+# Load required libraries
+library(tidyverse)
+
+# Define a function to read and annotate the bed file
+read_rename_bed_file <- function(file_path, prefix) {
+  read_delim(file_path, delim = "\t", 
+             col_names = c("chr","start","end","edit","score","strand", "Genefeature","Geneid","Genename")) %>% 
+    separate(edit, into=c("coverage","variant","editRatio"), sep = "([|])") %>% 
+    mutate(biotype = case_when(
+      Genefeature == "CDS" ~ "CDS",
+      Genefeature == "five_prime_utr" ~ "five_prime_utr",
+      Genefeature == "three_prime_utr" ~ "three_prime_utr",
+      Genefeature == "gene" & !(Genefeature %in% c("exon", "CDS", "three_prime_utr", "five_prime_utr")) ~ "intron",
+      TRUE ~ "other"
+    )) %>%
+    group_by(chr, start, end) %>%
+    arrange(match(biotype, c("CDS", "five_prime_utr", "three_prime_utr", "intron", "other"))) %>%
+    slice(1) %>%
+    dplyr::select(c(chr, start, end, Geneid, Genename, biotype, strand, variant, score, coverage, editRatio, )) %>%
+    distinct() %>%
+    rename(chr = "chr",
+           start = "start",
+           end = "end",
+           Geneid = "Geneid",
+           Genename = "Genename",
+           biotype = "biotype",
+           strand = "strand",
+           variant = "variant",
+           !!paste0(prefix, "_score") := "score",
+           !!paste0(prefix, "_coverage") := "coverage",
+           !!paste0(prefix, "_editRatio") := "editRatio",
+           )  %>% distinct() 
+}
+
+# Check if the correct number of command-line arguments is provided
+if (length(commandArgs()) != 3) {
+  stop("Usage: Rscript sailor_annotate.R <input_file> <output_file_prefix>")
+}
+
+# Get command-line arguments
+input_file <- commandArgs(trailingOnly = TRUE)[1]
+output_prefix <- commandArgs(trailingOnly = TRUE)[2]
+
+# Read and annotate the bed file
+output_file <- paste0(output_prefix, ".bed")
+annotated_data <- read_rename_bed_file(input_file, output_prefix)
+
+# Write the annotated data to the output file
+write_delim(annotated_data, output_file, delim = "\t")
+
+# Print completion message
+cat("Annotation completed. Output file:", output_file, "\n")
+
+```
+
+```{r eval=FALSE}
+# This step needs to take few minutes to run, so after save data, I set "r eval=FALSE".
+library(tidyverse)
+
+
+# define a function read file
+read_rename_bed_file <- function(file_path, prefix) {
+  read_delim(file_path, delim = "\t", 
+             col_names = c("chr","start","end","edit","score","strand", "Genefeature","Geneid","Genename")) %>% 
+    separate(edit, into=c("coverage","variant","editRatio"), sep = "([|])") %>% 
+    mutate(biotype = case_when(
+      Genefeature == "CDS" ~ "CDS",
+      Genefeature == "five_prime_utr" ~ "five_prime_utr",
+      Genefeature == "three_prime_utr" ~ "three_prime_utr",
+      Genefeature == "gene" & !(Genefeature %in% c("exon", "CDS", "three_prime_utr", "five_prime_utr")) ~ "intron",
+      TRUE ~ "other"
+    )) %>%
+    group_by(chr, start, end) %>%
+    arrange(match(biotype, c("CDS", "five_prime_utr", "three_prime_utr", "intron", "other"))) %>%
+    slice(1) %>%
+    dplyr::select(c(chr, start, end, Geneid, Genename, biotype, strand, variant, score, coverage, editRatio, )) %>%
+    distinct() %>%
+    rename(chr = "chr",
+           start = "start",
+           end = "end",
+           Geneid = "Geneid",
+           Genename = "Genename",
+           biotype = "biotype",
+           strand = "strand",
+           variant = "variant",
+           !!paste0(prefix, "_score") := "score",
+           !!paste0(prefix, "_coverage") := "coverage",
+           !!paste0(prefix, "_editRatio") := "editRatio",
+           )  %>% distinct() 
+}
+
+
+ 
+
+
+
+SCR_Rep1 <- read_rename_bed_file("./sailor_annotate_feature/SCR_Rep1_annotate.bed", "SCR_Rep1") 
+  
+SCR_Rep2 <- read_rename_bed_file("./sailor_annotate_feature/SCR_Rep2_annotate.bed", "SCR_Rep2") 
+
+
+SCR_Rep3 <- read_rename_bed_file("./sailor_annotate_feature/SCR_Rep3_annotate.bed", "SCR_Rep3") 
+
+shRNA33_Rep1 <- read_rename_bed_file("./sailor_annotate_feature/shRNA33_Rep1_annotate.bed", "shRNA33_Rep1") 
+shRNA33_Rep2 <- read_rename_bed_file("./sailor_annotate_feature/shRNA33_Rep2_annotate.bed", "shRNA33_Rep2") 
+shRNA33_Rep3 <- read_rename_bed_file("./sailor_annotate_feature/shRNA33_Rep3_annotate.bed", "shRNA33_Rep3") 
+
+shRNA37_Rep1 <- read_rename_bed_file("./sailor_annotate_feature/shRNA37_Rep1_annotate.bed", "shRNA37_Rep1") 
+shRNA37_Rep2 <- read_rename_bed_file("./sailor_annotate_feature/shRNA37_Rep2_annotate.bed", "shRNA37_Rep2") 
+
+shRNA37_Rep3 <- read_rename_bed_file("./sailor_annotate_feature/shRNA37_Rep3_annotate.bed", "shRNA37_Rep3")
+
+
+SCR_Rep1 <- SCR_Rep1 %>%
+  ungroup()
+SCR_Rep2 <- SCR_Rep2 %>%
+  ungroup()
+SCR_Rep3 <- SCR_Rep3 %>%
+  ungroup()
+
+shRNA33_Rep1 <- shRNA33_Rep1 %>%
+  ungroup()
+shRNA33_Rep2 <- shRNA33_Rep2 %>%
+  ungroup()
+shRNA33_Rep3 <- shRNA33_Rep3 %>%
+  ungroup()
+
+shRNA37_Rep1 <- shRNA37_Rep1 %>%
+  ungroup()
+shRNA37_Rep2 <- shRNA37_Rep2 %>%
+  ungroup()
+shRNA37_Rep3 <- shRNA37_Rep3 %>%
+  ungroup()
+
+save(SCR_Rep1, SCR_Rep2, SCR_Rep3, shRNA33_Rep1, shRNA33_Rep2, shRNA33_Rep3,shRNA37_Rep1, shRNA37_Rep2, shRNA37_Rep3, file = "output/Step02.C2U.rdata")
+```
+
+
+
+# piechart of % of distribution 5' vs. CDS vs. 3' vs. intron before QC
+
+```{r}
+library(tidyverse)
+load(file = "output/Step02.C2U.rdata")
+
+
+
+library(dplyr)
+
+# Assuming SCR_Rep1 is your data frame containing 'start' and 'biotype' columns
+SCR_Rep1_biotype_nsites <- SCR_Rep1 %>%
+  dplyr::select(start, biotype) %>%
+  distinct() %>%
+  group_by(biotype) %>%
+  summarise(n_distinct_start = n_distinct(start)) %>%
+  rename(SCR_Rep1 = n_distinct_start)
+
+SCR_Rep2_biotype_nsites <- SCR_Rep2 %>%
+  dplyr::select(start, biotype) %>%
+  distinct() %>%
+  group_by(biotype) %>%
+  summarise(n_distinct_start = n_distinct(start)) %>%
+  rename(SCR_Rep2 = n_distinct_start)
+
+SCR_Rep3_biotype_nsites <- SCR_Rep3 %>%
+  dplyr::select(start, biotype) %>%
+  distinct() %>%
+  group_by(biotype) %>%
+  summarise(n_distinct_start = n_distinct(start)) %>%
+  rename(SCR_Rep3 = n_distinct_start)
+
+
+
+shRNA33_Rep1_biotype_nsites <- shRNA33_Rep1 %>%
+  dplyr::select(start, biotype) %>%
+  distinct() %>%
+  group_by(biotype) %>%
+  summarise(n_distinct_start = n_distinct(start)) %>%
+  rename(shRNA33_Rep1 = n_distinct_start)
+
+shRNA33_Rep2_biotype_nsites <- shRNA33_Rep2 %>%
+  dplyr::select(start, biotype) %>%
+  distinct() %>%
+  group_by(biotype) %>%
+  summarise(n_distinct_start = n_distinct(start)) %>%
+  rename(shRNA33_Rep2 = n_distinct_start)
+
+shRNA33_Rep3_biotype_nsites <- shRNA33_Rep3 %>%
+  dplyr::select(start, biotype) %>%
+  distinct() %>%
+  group_by(biotype) %>%
+  summarise(n_distinct_start = n_distinct(start)) %>%
+  rename(shRNA33_Rep3 = n_distinct_start)
+
+
+
+shRNA37_Rep1_biotype_nsites <- shRNA37_Rep1 %>%
+  dplyr::select(start, biotype) %>%
+  distinct() %>%
+  group_by(biotype) %>%
+  summarise(n_distinct_start = n_distinct(start)) %>%
+  rename(shRNA37_Rep1 = n_distinct_start)
+
+shRNA37_Rep2_biotype_nsites <- shRNA37_Rep2 %>%
+  dplyr::select(start, biotype) %>%
+  distinct() %>%
+  group_by(biotype) %>%
+  summarise(n_distinct_start = n_distinct(start)) %>%
+  rename(shRNA37_Rep2 = n_distinct_start)
+
+shRNA37_Rep3_biotype_nsites <- shRNA37_Rep3 %>%
+  dplyr::select(start, biotype) %>%
+  distinct() %>%
+  group_by(biotype) %>%
+  summarise(n_distinct_start = n_distinct(start)) %>%
+  rename(shRNA37_Rep3 = n_distinct_start)
+
+
+
+
+library(dplyr)
+library(tidyr)
+
+# Sequentially join the 9 tables
+combined_data <- SCR_Rep1_biotype_nsites %>%
+  left_join(SCR_Rep2_biotype_nsites, by = "biotype") %>%
+  left_join(SCR_Rep3_biotype_nsites, by = "biotype") %>%
+  left_join(shRNA33_Rep1_biotype_nsites, by = "biotype") %>%
+  left_join(shRNA33_Rep2_biotype_nsites, by = "biotype") %>%
+  left_join(shRNA33_Rep3_biotype_nsites, by = "biotype") %>%
+  left_join(shRNA37_Rep1_biotype_nsites, by = "biotype") %>%
+  left_join(shRNA37_Rep2_biotype_nsites, by = "biotype") %>%
+  left_join(shRNA37_Rep3_biotype_nsites, by = "biotype")%>%
+  mutate(biotype = factor(biotype, levels = c("five_prime_utr", "intron", "CDS", "three_prime_utr")))
+
+# Convert the wide data format into a long data format
+long_data <- combined_data %>%
+  gather(key = "sample", value = "nsites", -biotype)
+
+print(long_data)
+
+
+library(dplyr)
+library(ggplot2)
+
+# Calculate the total number of sites for each sample
+total_sites_by_sample <- long_data %>%
+  group_by(sample) %>%
+  summarise(total_sites = sum(nsites))
+
+# Calculate the percentage of sites for each biotype and sample
+long_data_percentage <- long_data %>%
+  left_join(total_sites_by_sample, by = "sample") %>%
+  mutate(percentage = (nsites / total_sites) * 100) %>%
+  select(biotype, percentage, sample) %>%
+  mutate(biotype = factor(biotype, levels = c("five_prime_utr", "intron", "CDS", "three_prime_utr")))
+
+# Create a bar plot to visualize the distribution
+ggplot(long_data_percentage, aes(x = sample, y = percentage, fill = biotype)) +
+  geom_bar(stat = "identity", position = "stack") +
+  theme_minimal() +
+  labs(x = "Sample", y = "Percentage", title = "Distribution of Biotypes before QC") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+
+
+
+
+## display the 9 pie charts with sample labels but without the color legend
+
+library(dplyr)
+library(ggplot2)
+library(ggpubr)
+
+# Calculate the total number of sites for each sample
+total_sites_by_sample <- long_data %>%
+  group_by(sample) %>%
+  summarise(total_sites = sum(nsites))
+
+# Calculate the percentage of sites for each biotype and sample
+long_data_percentage <- long_data %>%
+  left_join(total_sites_by_sample, by = "sample") %>%
+  mutate(percentage = (nsites / total_sites) * 100) %>%
+  select(biotype, percentage, sample)
+
+# Create a pie chart for each sample with sample labels and without color legend
+pie_charts <- lapply(unique(long_data_percentage$sample), function(sample_name) {
+  sample_data <- long_data_percentage %>%
+    filter(sample == sample_name)
+  
+  pie_chart <- ggplot(sample_data, aes(x = "", y = percentage, fill = biotype)) +
+    geom_bar(width = 1, stat = "identity") +
+    coord_polar("y", start = 0) +
+    theme_void() +
+    theme(legend.position = "none") + # Remove the color legend
+    labs(title = sample_name, fill = NULL) # Keep the sample label
+  
+  return(pie_chart)
+})
+
+# Combine the pie charts using ggarrange from the ggpubr package
+combined_pie_charts <- ggarrange(plotlist = pie_charts, ncol = 3, nrow = 3)
+
+# Print the combined pie charts with sample labels and without color legend
+print(combined_pie_charts)
+
+
+```
+
+
+# 4. confidence score sites distribution
+
+
+
+```{r}
+# load data
+load(file = "output/Step02.C2U.rdata")
+
+library(tidyverse)
+library(dplyr)
+library(purrr)
+
+# density plot calculate each score bin number of edits for each sample.
+library(ggsci)
+
+
+
+
+
+dfs <- list(SCR_Rep1, SCR_Rep2, SCR_Rep3, shRNA33_Rep1, shRNA33_Rep2, shRNA33_Rep3, shRNA37_Rep1, shRNA37_Rep2, shRNA37_Rep3)
+
+
+C2U_sites <- reduce(dfs, full_join, by=c("chr", "start", "end", "Geneid", "Genename", "biotype", "strand", "variant"))
+
+
+C2U_sites_score <- C2U_sites %>%
+  dplyr::select(start,Geneid,matches("_score")) %>%
+  dplyr::mutate_all(~replace_na(., 0)) %>%
+  distinct()
+
+
+
+
+
+C2U_sites_score_long <- C2U_sites_score %>%
+  gather(key = sample, value = score, -start, -Geneid) %>%
+  mutate(sample = stringr::str_replace(sample, "_score$", ""))
+
+
+
+sample_name <- C2U_sites_score_long %>% dplyr::select(sample) %>% distinct()
+
+
+
+library(ggsci)
+
+
+ # Define vector of color codes for the nine lines
+colors <- c(gray(0.8), gray(0.5), gray(0.1), "#FF7F2A", "#FF3D00", "red", "#56B5FD", "#0077C2", "blue")
+
+
+# confidence score 0~1, number of edits count
+ p1 <- ggplot(C2U_sites_score_long, aes(x = score, colour = sample)) +
+  geom_freqpoly(binwidth = 0.05) +
+  scale_color_manual(values = colors) + 
+    scale_x_continuous(limits = c(0, 1)) +
+  theme_bw() 
+ 
+ 
+ 
+ # confidence score >= 0.5, number of edits count 
+ p2 <- ggplot(C2U_sites_score_long %>% filter(score >= 0.5), aes(x = score, colour = sample)) +
+  geom_freqpoly(binwidth = 0.05) +
+  scale_color_manual(values = colors) + 
+   scale_x_continuous(limits = c(0.5, 1)) +
+  theme_bw() 
+
+
+ # density, confidence score >= 0.5, number of edits count  
+ p3 <- ggplot(C2U_sites_score_long %>% filter(score >= 0.5)) + 
+   geom_density(aes(x = score, colour = sample)) + 
+  scale_color_manual(values = colors) + 
+   scale_x_continuous(limits = c(0.5, 1)) +
+  theme_bw()
+ 
+ p1
+ p2 
+ p3
+
+```
+
+
+
